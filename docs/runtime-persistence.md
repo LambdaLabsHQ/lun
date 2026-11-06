@@ -58,6 +58,10 @@ deliverable, and no worker keeps reclaiming the old offer.
 
 A wait persists its target set, deadline, event cursor and terminal outcome. The
 target set may include requests, external facts/occurrences and timers.
+An empty target set, used by `never()`, stays suspended unless its deadline
+expires or the execution is terminated. An event/timer target may pin a constant
+`result` payload; `or` uses unit so its inputs cannot leak their values, even
+inside a `merge`. The projection is stored with registration and survives restart.
 Observing an existing fact and recording a stream cursor happen in the same
 transaction as registration. Self-caused events are ignored. Deadlines are
 exclusive: an answer at the deadline loses to timeout. An `ask`-style timeout
@@ -87,8 +91,11 @@ recording an input alone never runs user code.
 
 SQLite uses full synchronous commits and serializes initialization and writes.
 Connection startup leaves journal mode unchanged to avoid a concurrent WAL-mode
-initialization race. Experimental schema version 6 refuses older/newer versions;
+initialization race. Experimental schema version 7 refuses older/newer versions;
 it does not silently reinterpret snapshots or rewrite an unsupported store.
+The machine ABI is `norn-cek:2`: `status` now returns `None` or `Some(outcome)`.
+Earlier experimental stores and checkpoints need their matching runtime; this
+prototype does not migrate them or silently change their built-in semantics.
 
 New database files are owner-only. Supply a private parent directory; existing
 files retain their permissions. Snapshots may contain private captured inputs.

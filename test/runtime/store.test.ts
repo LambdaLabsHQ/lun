@@ -278,11 +278,13 @@ test("pinned code, ABI and terminal state cannot be replaced on resumption", asy
 test("unsupported database versions are refused without rewriting them", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "norn-newer-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const path = join(directory, "runtime.sqlite");
-  const db = new DatabaseSync(path); db.exec("PRAGMA user_version = 99"); db.close();
-  assert.throws(() => new SqliteStore(path), /migration is required/);
-  const check = new DatabaseSync(path);
-  assert.equal(check.prepare("PRAGMA user_version").get()!.user_version, 99); check.close();
+  for (const version of [6, 99]) {
+    const path = join(directory, `runtime-${version}.sqlite`);
+    const db = new DatabaseSync(path); db.exec(`PRAGMA user_version = ${version}`); db.close();
+    assert.throws(() => new SqliteStore(path), /migration is required/);
+    const check = new DatabaseSync(path);
+    assert.equal(check.prepare("PRAGMA user_version").get()!.user_version, version); check.close();
+  }
 });
 
 test("new snapshot databases are private to their OS user", { skip: process.platform === "win32" }, async (t) => {

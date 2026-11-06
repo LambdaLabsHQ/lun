@@ -38,12 +38,14 @@ export interface RequestEvidence {
   receivedAt: number;
   accepted: boolean;
 }
+/** An optional result pins a constant occurrence payload instead of the incoming value. */
 export type WaitTarget =
   | { kind: "request"; id: string }
-  | { kind: "event"; key: string; mode: "fact" | "stream" }
-  | { kind: "timer"; at: number };
+  | { kind: "event"; key: string; mode: "fact" | "stream"; result?: Json }
+  | { kind: "timer"; at: number; result?: Json };
 export type WaitOutcome = RequestOutcome | { tag: "TimedOut" };
 export interface WaitDescription {
+  /** An empty set never fires on its own. */
   targets: WaitTarget[];
   until: number | null;
   withdrawOnTimeout: string[];

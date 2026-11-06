@@ -52,6 +52,14 @@ sequential and rearms a relative timer after each callback; it does not claim
 fixed-cadence or coalescing semantics. A production host also needs an alarm
 adapter; advancing the virtual clock is not a background polling service.
 
+`merge(a, b)` preserves the winning occurrence's value. `or(a, b)` accepts
+different stream element types and yields unit on either occurrence, including
+when nested inside another composition. `never()` has no occurrences: waiting
+on it persists an empty target set without becoming runnable on scans. An
+explicit `~until` still produces `TimedOut`. `status(request)` returns `None`
+while the request is open and `Some(outcome)` after settlement; timing out an
+explicit wait does not itself settle that request.
+
 `after` accepts a positive duration or an absolute time. An absolute time already
 reached when the wait is registered is ready immediately; `every` continues to
 require a positive duration. `show(x)` is a pure built-in, also usable as

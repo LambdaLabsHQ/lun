@@ -32,18 +32,27 @@ export function eventKey(value: Value): string {
   return JSON.stringify(canonical(value));
 }
 function targets(source: Value, now: number): WaitTarget[] {
-  if (source.type === "request") return [{ kind: "request", id: source.id }];
-  if (source.type !== "source") throw new ProgramError("wait needs a request, fact or stream");
-  if (source.name === "merge") return source.args.flatMap(s => targets(s, now));
-  if (source.name === "map" || source.name === "filter") throw new ProgramError("Stream map/filter are not implemented by the reference host yet");
-  if (source.name === "after" || source.name === "every") {
-    if (source.args.length !== 1 || Object.keys(source.labels).length) throw new ProgramError("A timer needs one positional argument");
-    const when = source.args[0];
-    if (source.name === "after" && when.type === "time") return [{ kind: "timer", at: milliseconds(when, now) }];
-    if (when.type !== "duration" || BigInt(when.value) <= 0n) throw new ProgramError("A relative timer needs a positive duration");
-    return [{ kind: "timer", at: milliseconds(when, now) }];
+  const result: WaitTarget[] = [];
+  const pending = [{ source, discard: false }];
+  while (pending.length) {
+    const { source: current, discard } = pending.pop()!;
+    if (current.type === "request") { result.push({ kind: "request", id: current.id }); continue; }
+    if (current.type !== "source") throw new ProgramError("wait needs a request, fact or stream");
+    if (current.name === "never") continue;
+    if (current.name === "merge" || current.name === "or") {
+      for (let i = current.args.length - 1; i >= 0; i--) pending.push({ source: current.args[i], discard: discard || current.name === "or" });
+      continue;
+    }
+    if (current.name === "map" || current.name === "filter") throw new ProgramError("Stream map/filter are not implemented by the reference host yet");
+    const projection = discard ? { result: json(unit) } : {};
+    if (current.name === "after" || current.name === "every") {
+      if (current.args.length !== 1 || Object.keys(current.labels).length) throw new ProgramError("A timer needs one positional argument");
+      const when = current.args[0];
+      if (!(current.name === "after" && when.type === "time") && (when.type !== "duration" || BigInt(when.value) <= 0n)) throw new ProgramError("A relative timer needs a positive duration");
+      result.push({ kind: "timer", at: milliseconds(when, now), ...projection });
+    } else result.push({ kind: "event", mode: current.kind, key: eventKey(current), ...projection });
   }
-  return [{ kind: "event", mode: source.kind, key: eventKey(source) }];
+  return result;
 }
 function participant(value: Value | undefined): string {
   if (!value || value.type !== "participant") throw new ProgramError("Expected a participant");
@@ -135,9 +144,10 @@ export class Runtime {
       if (args.length !== 1) throw new ProgramError("wait needs one target");
       base.waits = [{ targets: targets(args[0], now), until, withdrawOnTimeout: [] }];
     } else if (["cancel", "handOver", "status"].includes(name)) {
+      if (args.length !== (name === "handOver" ? 2 : 1)) throw new ProgramError(`${name} received the wrong number of arguments`);
       const id = requestHandle(args[0]), request = await this.store.request(id);
       if (!request || request.executionId !== before.executionId) throw new ProgramError("Request is outside this execution's scope");
-      if (name === "status") return finish(request.outcome ? outcome(request.outcome) : variant("Pending"));
+      if (name === "status") return finish(request.outcome ? variant("Some", outcome(request.outcome)) : variant("None"));
       if (name === "cancel") return { ...finish(unit), requestActions: request.outcome ? [] : [{ id, epoch: request.epoch, holder: request.holder, action: "cancel" }] };
       return { ...finish({ type: "request", id }), requestActions: request.outcome ? [] : [{
         id, epoch: request.epoch, holder: request.holder, action: "handOver", nextHolder: participant(args[1]),

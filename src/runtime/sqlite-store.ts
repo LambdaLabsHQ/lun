@@ -9,7 +9,7 @@ import {
 } from "./persistence.ts";
 
 type Row = Record<string, unknown>;
-const schemaVersion = 6;
+const schemaVersion = 7;
 const terminal = new Set<ExecutionStatus>(["completed", "failed", "cancelled", "revoked"]);
 const activeSql = "e.status IN ('ready', 'suspended')";
 
@@ -114,7 +114,7 @@ export class SqliteStore implements DurableStore {
             CREATE INDEX effects_execution ON effects(execution_id, revision, ordinal);
             CREATE INDEX effects_recovery ON effects(status, lease_until, id);
             CREATE INDEX requests_execution ON requests(execution_id);
-            PRAGMA user_version = 6;
+            PRAGMA user_version = 7;
           `);
         } else if (version !== schemaVersion) {
           throw new Error(`Unsupported Norn store version ${version}; migration is required`);
@@ -238,7 +238,6 @@ export class SqliteStore implements DurableStore {
         return request;
       });
       const savedWaits = (change.waits ?? []).map((description, ordinal) => {
-        if (!description.targets.length) throw new Error("A wait needs a target");
         if (description.until !== null) clock(description.until);
         for (const target of description.targets) {
           if (target.kind === "timer") clock(target.at);
@@ -342,12 +341,12 @@ export class SqliteStore implements DurableStore {
           const r = this.readRequest(target.id)!;
           if (r.outcome !== null && r.settledAt !== null && r.settledAt <= now) candidates.push({ at: r.settledAt, priority: 1, outcome: r.outcome });
         } else if (target.kind === "timer") {
-          if (target.at <= now) candidates.push({ at: target.at, priority: 1, outcome: { tag: "Done", value: { type: "time", value: String(target.at) } } });
+          if (target.at <= now) candidates.push({ at: target.at, priority: 1, outcome: { tag: "Done", value: Object.hasOwn(target, "result") ? target.result! : { type: "time", value: String(target.at) } } });
         } else {
           const row = this.db.prepare(`SELECT * FROM events WHERE key = ? AND mode = ? AND at <= ? AND seq > ?
             AND (origin IS NULL OR origin <> ?) ORDER BY at, seq LIMIT 1`)
             .get(target.key, target.mode, now, target.mode === "fact" ? 0 : wait.cursor, wait.executionId);
-          if (row) candidates.push({ at: row.at as number, priority: 1, outcome: { tag: "Done", value: JSON.parse(row.value as string) as Json } });
+          if (row) candidates.push({ at: row.at as number, priority: 1, outcome: { tag: "Done", value: Object.hasOwn(target, "result") ? target.result! : JSON.parse(row.value as string) as Json } });
         }
       }
       candidates.sort((a, b) => a.at - b.at || a.priority - b.priority);

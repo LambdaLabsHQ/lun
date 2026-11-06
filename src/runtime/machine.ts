@@ -3,7 +3,7 @@ import type { Code } from "./code.ts";
 import { match } from "./pattern.ts";
 import { equal, number, show, text, unit, variant, type Value } from "./value.ts";
 
-export const machineVersion = "norn-cek:1";
+export const machineVersion = "norn-cek:2";
 export interface Effect { name: string; args: Value[]; labels: Record<string, Value> }
 type Control =
   | { kind: "eval"; node: string; env: string }
@@ -38,7 +38,7 @@ export interface Machine {
 const factBuiltins = new Set(["merged", "released", "machineUpdated", "replied", "runEnded"]);
 const streamBuiltins = new Set(["every", "after", "ciFailed", "prActivity", "docChanged", "message"]);
 const effectBuiltins = new Set(["ask", "run", "request", "start", "wait", "cancel", "handOver", "status", "say", "judge"]);
-const builtins = new Set([...factBuiltins, ...streamBuiltins, ...effectBuiltins, "now", "show", "fail", "merge", "map", "filter", "forEach"]);
+const builtins = new Set([...factBuiltins, ...streamBuiltins, ...effectBuiltins, "now", "show", "fail", "merge", "or", "never", "map", "filter", "forEach"]);
 
 export function start(code: Code, now = 0): Machine {
   return { version: machineVersion, codeId: code.id, control: { kind: "eval", node: code.root, env: "e0" }, frames: [],
@@ -203,8 +203,12 @@ function builtin(code: Code, machine: Machine, name: string, args: Value[], labe
     case "now": if (args.length || Object.keys(labels).length) throw new Error("now takes no arguments");
       value = { type: "time", value: String(machine.resumedAt) }; break;
     case "fail": machine.frames = []; machine.control = { kind: "failed", outcome: args[0] ?? variant("Failed", text("fail requires an outcome")) }; return;
-    case "merge": {
-      if (args.length < 2 || args.some(a => a.type !== "source" || a.kind !== "stream")) throw new Error("merge needs at least two streams");
+    case "never": {
+      if (args.length || Object.keys(labels).length) throw new Error("never takes no arguments");
+      value = { type: "source", kind: "stream", name, args, labels }; break;
+    }
+    case "merge": case "or": {
+      if (args.length !== 2 || Object.keys(labels).length || args.some(a => a.type !== "source" || a.kind !== "stream")) throw new Error(`${name} needs two positional streams`);
       value = { type: "source", kind: "stream", name, args, labels }; break;
     }
     case "map": case "filter": {

@@ -129,8 +129,8 @@
                               },
                               "callee": {
                                 "kind": "Identifier",
-                                "name": "merge",
-                                "span": {"start": {"line": 7, "column": 34, "offset": 275}, "end": {"line": 7, "column": 39, "offset": 280}}
+                                "name": "or",
+                                "span": {"start": {"line": 7, "column": 34, "offset": 275}, "end": {"line": 7, "column": 36, "offset": 277}}
                               },
                               "args": [
                                 {
@@ -138,55 +138,55 @@
                                   "callee": {
                                     "kind": "Identifier",
                                     "name": "after",
-                                    "span": {"start": {"line": 7, "column": 40, "offset": 281}, "end": {"line": 7, "column": 45, "offset": 286}}
+                                    "span": {"start": {"line": 7, "column": 37, "offset": 278}, "end": {"line": 7, "column": 42, "offset": 283}}
                                   },
                                   "args": [
                                     {
                                       "kind": "DurationLiteral",
                                       "amount": "2",
                                       "unit": "h",
-                                      "span": {"start": {"line": 7, "column": 46, "offset": 287}, "end": {"line": 7, "column": 48, "offset": 289}}
+                                      "span": {"start": {"line": 7, "column": 43, "offset": 284}, "end": {"line": 7, "column": 45, "offset": 286}}
                                     }
                                   ],
-                                  "span": {"start": {"line": 7, "column": 40, "offset": 281}, "end": {"line": 7, "column": 49, "offset": 290}}
+                                  "span": {"start": {"line": 7, "column": 37, "offset": 278}, "end": {"line": 7, "column": 46, "offset": 287}}
                                 }
                               ],
-                              "span": {"start": {"line": 7, "column": 5, "offset": 246}, "end": {"line": 7, "column": 50, "offset": 291}}
+                              "span": {"start": {"line": 7, "column": 5, "offset": 246}, "end": {"line": 7, "column": 47, "offset": 288}}
                             },
                             "callee": {
                               "kind": "Identifier",
                               "name": "wait",
-                              "span": {"start": {"line": 7, "column": 52, "offset": 293}, "end": {"line": 7, "column": 56, "offset": 297}}
+                              "span": {"start": {"line": 7, "column": 49, "offset": 290}, "end": {"line": 7, "column": 53, "offset": 294}}
                             },
                             "args": [],
-                            "span": {"start": {"line": 7, "column": 5, "offset": 246}, "end": {"line": 7, "column": 56, "offset": 297}}
+                            "span": {"start": {"line": 7, "column": 5, "offset": 246}, "end": {"line": 7, "column": 53, "offset": 294}}
                           },
-                          "span": {"start": {"line": 7, "column": 5, "offset": 246}, "end": {"line": 7, "column": 57, "offset": 298}}
+                          "span": {"start": {"line": 7, "column": 5, "offset": 246}, "end": {"line": 7, "column": 54, "offset": 295}}
                         },
                         {
                           "kind": "Call",
                           "callee": {
                             "kind": "Identifier",
                             "name": "push",
-                            "span": {"start": {"line": 8, "column": 5, "offset": 303}, "end": {"line": 8, "column": 9, "offset": 307}}
+                            "span": {"start": {"line": 8, "column": 5, "offset": 300}, "end": {"line": 8, "column": 9, "offset": 304}}
                           },
                           "args": [],
-                          "span": {"start": {"line": 8, "column": 5, "offset": 303}, "end": {"line": 8, "column": 11, "offset": 309}}
+                          "span": {"start": {"line": 8, "column": 5, "offset": 300}, "end": {"line": 8, "column": 11, "offset": 306}}
                         }
                       ],
-                      "span": {"start": {"line": 6, "column": 10, "offset": 240}, "end": {"line": 9, "column": 4, "offset": 313}}
+                      "span": {"start": {"line": 6, "column": 10, "offset": 240}, "end": {"line": 9, "column": 4, "offset": 310}}
                     },
-                    "span": {"start": {"line": 4, "column": 3, "offset": 159}, "end": {"line": 9, "column": 4, "offset": 313}}
+                    "span": {"start": {"line": 4, "column": 3, "offset": 159}, "end": {"line": 9, "column": 4, "offset": 310}}
                   }
                 ],
-                "span": {"start": {"line": 2, "column": 22, "offset": 67}, "end": {"line": 10, "column": 2, "offset": 315}}
+                "span": {"start": {"line": 2, "column": 22, "offset": 67}, "end": {"line": 10, "column": 2, "offset": 312}}
               },
-              "span": {"start": {"line": 2, "column": 16, "offset": 61}, "end": {"line": 10, "column": 2, "offset": 315}}
+              "span": {"start": {"line": 2, "column": 16, "offset": 61}, "end": {"line": 10, "column": 2, "offset": 312}}
             },
-            "span": {"start": {"line": 2, "column": 9, "offset": 54}, "end": {"line": 10, "column": 2, "offset": 315}}
+            "span": {"start": {"line": 2, "column": 9, "offset": 54}, "end": {"line": 10, "column": 2, "offset": 312}}
           }
         ],
-        "span": {"start": {"line": 2, "column": 1, "offset": 46}, "end": {"line": 10, "column": 2, "offset": 315}}
+        "span": {"start": {"line": 2, "column": 1, "offset": 46}, "end": {"line": 10, "column": 2, "offset": 312}}
       },
       {
         "kind": "Try",
@@ -195,14 +195,14 @@
           "callee": {
             "kind": "Identifier",
             "name": "push",
-            "span": {"start": {"line": 11, "column": 1, "offset": 316}, "end": {"line": 11, "column": 5, "offset": 320}}
+            "span": {"start": {"line": 11, "column": 1, "offset": 313}, "end": {"line": 11, "column": 5, "offset": 317}}
           },
           "args": [],
-          "span": {"start": {"line": 11, "column": 1, "offset": 316}, "end": {"line": 11, "column": 7, "offset": 322}}
+          "span": {"start": {"line": 11, "column": 1, "offset": 313}, "end": {"line": 11, "column": 7, "offset": 319}}
         },
-        "span": {"start": {"line": 11, "column": 1, "offset": 316}, "end": {"line": 11, "column": 8, "offset": 323}}
+        "span": {"start": {"line": 11, "column": 1, "offset": 313}, "end": {"line": 11, "column": 8, "offset": 320}}
       }
     ],
-    "span": {"start": {"line": 1, "column": 1, "offset": 0}, "end": {"line": 12, "column": 1, "offset": 324}}
+    "span": {"start": {"line": 1, "column": 1, "offset": 0}, "end": {"line": 12, "column": 1, "offset": 321}}
   }
 }
