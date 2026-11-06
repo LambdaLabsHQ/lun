@@ -4,7 +4,7 @@ let rec push = () => {
   if judge("merged and verified live", ~about=report)? {
     Done(report)
   } else {
-    prActivity("acme/api#1439")->merge(after(2h))->wait?
+    prActivity("acme/api#1439")->or(after(2h))->wait?
     push()
   }
 }

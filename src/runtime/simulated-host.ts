@@ -32,7 +32,7 @@ export class SimulatedHost implements Policy {
     return this.store.settleRequest(request.id, request.epoch, request.holder, requestOutcome(response));
   }
   async emit(id: string, source: Value, value: Value, originExecutionId?: string): Promise<boolean> {
-    if (source.type !== "source" || ["merge", "after", "every", "map", "filter"].includes(source.name)) throw new Error("Emit a concrete external fact or stream occurrence");
+    if (source.type !== "source" || ["merge", "or", "never", "after", "every", "map", "filter"].includes(source.name)) throw new Error("Emit a concrete external fact or stream occurrence");
     return this.store.publishEvent(id, eventKey(source), source.kind, value as unknown as Json, originExecutionId);
   }
   async dispatch(): Promise<number> {
