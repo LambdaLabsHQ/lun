@@ -1,9 +1,11 @@
 # Lun language spec (draft v0)
 
 > Status: design draft, 2026-11-06. Nothing here is implemented, and
-> everything is open to change. The language sections were drafted by Claude
-> and the runtime protocol (§11) is based on research by Codex
-> ([runtime research](research/runtime.md)). The project was started at
+> everything is open to change. The language sections were drafted by Claude.
+> The runtime protocol (§11) is based on research by Codex
+> ([runtime research](research/runtime.md)). The formal model (§12) draws on
+> two surveys ([models](research/models.md),
+> [choreographies](research/choreographies.md)). The project was started at
 > [Lambda Labs](https://github.com/LambdaLabsHQ).
 
 ## 1. What Lun is
@@ -210,7 +212,8 @@ the program's author, and is authorized at the moment it is performed (§10).
 | `run(who, task, ~context=?, ~until=?) : outcome<report>` | yes | Starts a run of `who` on `task`, written in natural language, and waits for its final report. What `report` contains is host-defined: text, changes made, evidence. |
 | `request(who, text)`, `start(who, task) : request<'a>` | no | The same two calls, returning a handle instead of waiting. |
 | `wait(x, ~until=?) : outcome<'a>` | yes | Waits for a request, an event or a stream (§6.2). |
-| `cancel(r)`, `handOver(r, who)`, `status(r)` | no | Calls a request off, moves the same request to another participant, or looks at its progress without waiting. |
+| `cancel(r)`, `handOver(r, who)`, `status(r)` | no | Calls a request off, moves the same request to another participant with a new epoch (§12), or looks at its progress without waiting. |
+| `scope(f)` | — | Runs `f`. Every request started inside it is cancelled when `f` ends, loses an `any`, or passes its deadline (§12). |
 | `say(to, text) : unit` | no | Posts a message to a participant or a `ref`. |
 | `judge(condition, ~about=?) : outcome<bool>` | briefly | The host's judge model decides whether a condition written in natural language holds. |
 | `now() : time` | no | The time the program resumed. It is stable within one step. |
@@ -392,26 +395,82 @@ The language fixes a portable kernel. Hosts implement a contract.
 - pure loops that never wait;
 - handing over a request without duplicating its rights.
 
-## 12. The formal model underneath (under research)
+## 12. The formal model underneath (proposed)
 
-The behaviour above can be read as continuations, algebraic effects and
-handlers, actors with timed receives, or choreographies. These models are
-close, and several are isomorphic. Two surveys are in progress:
+Two surveys informed this section. The model survey is
+[research/models.md](research/models.md) and the choreography survey is
+[research/choreographies.md](research/choreographies.md). Their conclusions
+agree.
 
-- **The candidates:**
-  - continuations;
-  - algebraic effects (OCaml 5, Koka, Effekt, Unison);
-  - actors (Erlang `receive … after`, virtual actors);
-  - CSP and the π-calculus;
-  - dataflow (Bloom, Hydro);
-  - statecharts and Petri nets;
-  - tuple spaces (Linda);
-  - durable promises.
-- **Choreographic programming and multiparty session types**: Choral,
-  HasChor, MultiChor, ChoRus.
+**Core: one-shot algebraic effects, run as stored continuations inside virtual
+actors.**
 
-Their results will decide which formal model the spec is written against, and
-whether interactions between participants can be type-checked as protocols.
+- **Effects.** Every suspension is an effect, and the host is the outermost
+  handler. Continuations are delimited, not `call/cc`, and one-shot, as in
+  OCaml 5. Higher-level policies are ordinary handlers in the standard library
+  (`escalating`, `decide`). Agents write direct-style code; handlers live in
+  reviewed library code.
+- **Virtual actors.** Each running program instance is a single-threaded actor
+  with its own identity and state, so no conductor exists. Programs share only
+  two things:
+  - **Durable single-assignment requests.** A request goes from `Pending` to
+    exactly one terminal outcome, and the first committed resolution wins.
+  - **Pushed events.**
+- **Where coordination is needed.** By the CALM theorem, monotone steps need
+  no coordination: a fact such as "the PR is merged" stays true once it is
+  true. The non-monotone steps are:
+  - "no answer by T";
+  - a declared default;
+  - the winner of an `any`;
+  - `cancel`;
+  - `handOver`.
+
+  These are exactly the steps the owning actor decides, in its own committed
+  order.
+- **Code identity.** Code is pinned per instance; edits start new instances;
+  migration is explicit, as with Erlang's `code_change`. The recovery
+  backend, explicit evaluator state or replay, is still chosen by the
+  experiment in §11.
+
+**Rules adopted from the surveys:**
+
+1. **Structured cancellation.** `scope(f)` cancels every request started
+   inside `f` when `f` returns, loses an `any`, or passes its deadline. This
+   is the same idea as Orc pruning, YAWL cancel regions and leaving a
+   statechart state.
+2. **Handover is delegation plus fencing.**
+   - `handOver(r, who)` keeps the same request and increases its epoch.
+   - A resolution or capability that carries an old epoch is refused.
+   - The previous holder is told it was released.
+3. **Everyone asked hears how it ended.** When a request ends by answer,
+   default, cancellation or handover, every participant who was asked is told
+   the outcome. Nobody is left believing they are still on the hook, and no
+   failure is silent.
+4. **Correlation keys.** Every wait names exactly what it waits for: a request
+   identity, or a PR, SHA or release. A later, unrelated message can never
+   satisfy it.
+5. **Effect rows as an authority manifest.** The inferred effects of a program
+   (`ask`, `run`, `say` and their targets) are shown before it starts, the same
+   way a reviewer reads a capability list.
+6. **Dry runs.** A handler with a simulated clock and scripted answers runs a
+   program before it is committed. That is how a person sees "if nobody
+   answers, at 12:00 this happens".
+
+**Choreographies are a view, not the core.** Choreographic programming gives
+a global narrative and deadlock freedom. But only the program's own role runs
+code: people, agents and external systems cannot run projected programs.
+Timeouts, refusal, revocation, handover and durable waits are still research
+topics there. Lun therefore keeps the effects core and borrows the
+choreographic view:
+
+- each participant's card, prompt and reply schema is generated from the
+  program;
+- replies that break that schema become `Failed`;
+- a running instance can be drawn as a sequence diagram.
+
+A `choreo` block could later be a library over effects. Choreographic
+projection can be written as effect handlers, but effects cannot be built
+from projection.
 
 ## 13. Open questions
 
