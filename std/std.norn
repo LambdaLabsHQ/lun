@@ -1,0 +1,27 @@
+// The standard library, written in Norn and opened with `open Std` (spec §8).
+
+let remind = (who, text, ~at) => {
+  at->sleepUntil?
+  ask(who, text)
+}
+
+let decide = (who, question, ~options, ~recommend, ~until) =>
+  switch ask(who, `${question}\nRecommended: ${recommend->show}. No answer by ${until->show} means the recommendation.`, ~options, ~until) {
+  | Done(choice) => choice
+  | TimedOut => recommend            // the declared default, and only on timeout
+  | other => fail(other)
+  }
+
+let followUp = (who, text, ~until, ~escalateTo) => {
+  let q = request(who, text)
+  switch q->wait(~until) {
+  | TimedOut => q->handOver(escalateTo)->wait
+  | answered => answered
+  }
+}
+
+let schedule = (~every as period, ~on=[], task) =>
+  every(period)->mergeAll(on)->forEach(_ => run(@auto, task))
+
+let digest = (who, ~every as period) =>
+  schedule(~every=period, `Tell ${who->name} what changed since they last looked; say nothing if nothing changed`)

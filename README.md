@@ -2,8 +2,8 @@
 
 **The coordination language for teams of people and AI agents.**
 
-> Status: design draft. There is no implementation yet. The spec is open
-> for discussion: open an issue.
+> Status: design draft; front-end only. The spec is open for discussion:
+> open an issue.
 
 Norn solves coordination **at the language level**. A team of people and AI
 agents has to settle several things:
@@ -97,7 +97,29 @@ their work together borrows its name.
 ## Documents
 
 - [Language spec (draft v0)](docs/spec.md)
+- [Syntax tree (AST) and syntax decisions](docs/ast.md)
 - [Durable runtime research](docs/research/runtime.md)
+
+## Building
+
+The front-end has a lexer, a parser and the syntax tree. It is TypeScript,
+and Node 22.18 or newer runs it as is: there is no build step. CI runs on
+Node 24.
+
+```sh
+npm ci              # install the pinned dev dependencies
+npm test            # run the tests
+npm run typecheck   # type-check with tsc
+
+npm run norn -- check examples std                   # report syntax errors
+npm run norn -- parse examples/decide.norn           # print the syntax tree
+npm run norn -- parse --json examples/decide.norn    # print it as JSON
+```
+
+`npm link` puts the `norn` command on your PATH.
+
+The [examples](examples) are the programs of spec §3. The
+[standard library](std/std.norn) is §8.
 
 ## Hosts
 
