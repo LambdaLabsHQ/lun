@@ -56,9 +56,9 @@ else for (const d of result.diagnostics) console.error(formatDiagnostic(d, sourc
 - **CLI.**
   - `norn parse [--json] file.norn` prints the tree as an outline, or as JSON
     on one line. `-` reads standard input.
-  - `norn check paths…` reports the errors in files, and in the `.norn` files
-    under directories.
-  - Both exit with 1 on a syntax error and 2 on a usage error.
+  - `norn check [--host file] [--json] paths…` parses and type-checks files,
+    and the `.norn` files under directories, as [types](types.md) describes.
+  - Both exit with 1 on an error and 2 on a usage error.
 
 ## Stability
 
