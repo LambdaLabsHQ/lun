@@ -93,7 +93,9 @@ SQLite uses full synchronous commits and serializes initialization and writes.
 Connection startup leaves journal mode unchanged to avoid a concurrent WAL-mode
 initialization race. Experimental schema version 7 refuses older/newer versions;
 it does not silently reinterpret snapshots or rewrite an unsupported store.
-The machine ABI is `norn-cek:2`: `status` now returns `None` or `Some(outcome)`.
+The machine ABI is `norn-cek:3`: it includes the handler-report suspension and
+the `status` shape `None` or `Some(outcome)`. A failed handler's notification
+intent and continuation past reporting commit together under the same revision.
 Earlier experimental stores and checkpoints need their matching runtime; this
 prototype does not migrate them or silently change their built-in semantics.
 
