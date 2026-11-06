@@ -1,0 +1,27 @@
+{
+  "name": "norn",
+  "version": "0.0.0",
+  "description": "Norn, the coordination language for teams of people and AI agents",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/norn-lang/norn.git"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "bin": {
+    "norn": "src/cli.ts"
+  },
+  "scripts": {
+    "norn": "node src/cli.ts",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3"
+  }
+}
