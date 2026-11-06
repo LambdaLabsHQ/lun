@@ -20,7 +20,10 @@ export interface AstDocument {
 /** Serializes a program as a norn-ast JSON document, ending in a newline. */
 export function astToJson(program: Program): string {
   const document: AstDocument = { format: AST_FORMAT, version: AST_VERSION, program };
-  return `${write(document, "")}\n`;
+  const out: string[] = [];
+  write(document, "", out);
+  out.push("\n");
+  return out.join("");
 }
 
 /** Reads a document written by `astToJson`. Throws if it is not a norn-ast document of this version. */
@@ -55,27 +58,44 @@ function isInline(value: unknown): boolean {
   return !("kind" in value) && Object.values(value).every(isInline);
 }
 
-function write(value: unknown, indent: string): string {
+/** Appends the JSON text of `value` to `out`, so that writing takes time linear in its length. */
+function write(value: unknown, indent: string, out: string[]): void {
+  if (value === undefined) throw new Error("undefined is not part of the AST; use null");
+  if (typeof value === "number" && !Number.isFinite(value)) throw new Error(`${value} has no JSON form`);
+  if (value === null || typeof value !== "object" || isInline(value)) {
+    out.push(inline(value));
+    return;
+  }
+  const inner = `${indent}  `;
+  if (Array.isArray(value)) {
+    if (value.length === 0 || value.every(isInline)) {
+      out.push(`[${value.map(inline).join(", ")}]`);
+      return;
+    }
+    out.push("[\n");
+    value.forEach((item, index) => {
+      out.push(index === 0 ? inner : `,\n${inner}`);
+      write(item, inner, out);
+    });
+    out.push(`\n${indent}]`);
+    return;
+  }
+  const object = value as JsonObject;
+  out.push("{\n");
+  orderedKeys(object).forEach((key, index) => {
+    out.push(`${index === 0 ? "" : ",\n"}${inner}${JSON.stringify(key)}: `);
+    write(object[key], inner, out);
+  });
+  out.push(`\n${indent}}`);
+}
+
+/** Scalars, and spans and positions on one line. */
+function inline(value: unknown): string {
   if (value === undefined) throw new Error("undefined is not part of the AST; use null");
   if (typeof value === "number" && !Number.isFinite(value)) throw new Error(`${value} has no JSON form`);
   if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (isInline(value)) return writeInline(value);
-  const inner = `${indent}  `;
-  if (Array.isArray(value)) {
-    if (value.length === 0) return "[]";
-    if (value.every(isInline)) return `[${value.map(writeInline).join(", ")}]`;
-    return `[\n${value.map((item) => inner + write(item, inner)).join(",\n")}\n${indent}]`;
-  }
   const object = value as JsonObject;
-  const entries = orderedKeys(object).map((key) => `${inner}${JSON.stringify(key)}: ${write(object[key], inner)}`);
-  return `{\n${entries.join(",\n")}\n${indent}}`;
-}
-
-function writeInline(value: unknown): string {
-  if (value === null || typeof value !== "object") return write(value, "");
-  const object = value as JsonObject;
-  const entries = Object.keys(object).map((key) => `${JSON.stringify(key)}: ${writeInline(object[key])}`);
-  return `{${entries.join(", ")}}`;
+  return `{${Object.keys(object).map((key) => `${JSON.stringify(key)}: ${inline(object[key])}`).join(", ")}}`;
 }
 
 /** Nodes: `kind`, the fields in NODE_FIELDS order, `span`. Other objects keep their own order. */

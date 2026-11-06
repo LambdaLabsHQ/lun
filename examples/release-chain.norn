@@ -1,0 +1,8 @@
+// A chain of facts in the world, then an agent.
+let pr = merged("acme/api#1436")->wait?
+switch released(Beta, ~containing=pr)->wait(~until=1d) {
+| Done(release) =>
+  machineUpdated(~machine="win-builder", ~atLeast=release.version)->wait?
+  run(@codex, "Check out acme/api on win-builder and confirm the long-path fix")
+| _ => say(@alice, "#1436 did not reach a beta within a day")
+}
