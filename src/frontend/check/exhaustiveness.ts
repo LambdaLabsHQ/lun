@@ -220,48 +220,81 @@ class Space {
   }
 
   /**
-   * Every value vector, as patterns, that no row of `matrix` matches. A
-   * vector is a linked list, so that putting a constructor in front of each
-   * of many witnesses does not copy them.
+   * Every value vector, as patterns, that no row of `matrix` matches.
+   *
+   * It works on an explicit stack: each step splits a matrix into the
+   * matrices of its first column's constructors, and assembles their
+   * witnesses once they are known. A vector is a linked list, so putting a
+   * constructor in front of many witnesses copies none of them.
    */
   missing(matrix: readonly (readonly Pat[])[], types: readonly Type[]): Vector[] {
-    // No row: any value is missing. A row of wildcards: none is.
-    if (matrix.length === 0) return [anyVector(types.length)];
-    if (matrix.some(coversAll)) return [];
-    const [type, ...restTypes] = types as [Type, ...Type[]];
-    const present = headCtors(matrix);
-    const signature = this.signature(type);
-    const witnesses: Vector[] = [];
-    const explore = (ctor: Ctor) => {
-      for (const witness of this.missing(specialize(matrix, ctor), [...this.argumentTypes(ctor, type), ...restTypes])) {
-        const args: Pat[] = [];
-        let rest: Vector = witness;
-        for (let index = 0; index < ctor.arity; index += 1) {
-          args.push(rest!.head);
-          rest = rest!.tail;
+    type Deliver = (witnesses: Vector[]) => void;
+    type Step =
+      | { readonly kind: "split"; readonly matrix: readonly (readonly Pat[])[]; readonly types: readonly Type[]; readonly deliver: Deliver }
+      | { readonly kind: "assemble"; readonly parts: Vector[][]; readonly assemble: (parts: Vector[][]) => Vector[]; readonly deliver: Deliver };
+    let result: Vector[] = [];
+    const stack: Step[] = [{ kind: "split", matrix, types, deliver: (witnesses) => (result = witnesses) }];
+    for (let step = stack.pop(); step !== undefined; step = stack.pop()) {
+      if (step.kind === "assemble") {
+        step.deliver(step.assemble(step.parts));
+        continue;
+      }
+      const { matrix: rows, types: columns, deliver } = step;
+      // No row: any value is missing. A row of wildcards: none is.
+      if (rows.length === 0) {
+        deliver([anyVector(columns.length)]);
+        continue;
+      }
+      if (rows.some(coversAll)) {
+        deliver([]);
+        continue;
+      }
+      const [type, ...restTypes] = columns as [Type, ...Type[]];
+      const present = headCtors(rows);
+      const signature = this.signature(type);
+      const complete = signature !== null && signature.every((ctor) => present.has(ctor.key));
+      // The constructors to explore: all of a complete signature; otherwise those that appear, and the rows that match anything.
+      const explored = complete ? signature : signature === null ? [...present.values()] : signature.filter((ctor) => present.has(ctor.key));
+      const children = explored.map((ctor) => ({ matrix: specialize(rows, ctor), types: [...this.argumentTypes(ctor, type), ...restTypes] }));
+      if (!complete) children.push({ matrix: defaults(rows), types: restTypes });
+      const assemble = (parts: Vector[][]): Vector[] => {
+        const witnesses: Vector[] = [];
+        const others = complete ? [] : parts[explored.length]!;
+        const wrap = (ctor: Ctor) => {
+          for (const witness of parts[explored.indexOf(ctor)]!) witnesses.push(applyCtor(ctor, witness));
+        };
+        if (complete) {
+          for (const ctor of explored) wrap(ctor);
+        } else if (signature !== null && present.size > 0) {
+          // In the order of the type's constructors: those that appear, explored, and the others with any arguments.
+          for (const ctor of signature) {
+            if (present.has(ctor.key)) wrap(ctor);
+            else for (const witness of others) witnesses.push({ head: { tag: "ctor", ctor, args: anys(ctor.arity) }, tail: witness });
+          }
+        } else {
+          // No finite set of constructors, or none appears: the constructors that do, then any other value.
+          for (const ctor of explored) wrap(ctor);
+          for (const witness of others) witnesses.push({ head: ANY, tail: witness });
         }
-        witnesses.push({ head: { tag: "ctor", ctor, args }, tail: rest });
-      }
-    };
-    if (signature !== null && signature.every((ctor) => present.has(ctor.key))) {
-      for (const ctor of signature) explore(ctor);
-      return witnesses;
+        return witnesses;
+      };
+      const parts: Vector[][] = Array.from({ length: children.length }, () => []);
+      stack.push({ kind: "assemble", parts, assemble, deliver });
+      children.forEach((child, index) => stack.push({ kind: "split", ...child, deliver: (witnesses) => (parts[index] = witnesses) }));
     }
-    // What no row with a constructor here covers: the rows that match anything decide it.
-    const others = this.missing(defaults(matrix), restTypes);
-    if (signature !== null && present.size > 0) {
-      // In the order of the type's constructors: those that appear, explored, and those that do not, with any arguments.
-      for (const ctor of signature) {
-        if (present.has(ctor.key)) explore(ctor);
-        else for (const witness of others) witnesses.push({ head: { tag: "ctor", ctor, args: anys(ctor.arity) }, tail: witness });
-      }
-      return witnesses;
-    }
-    // No finite set of constructors, or none appears: the constructors that do, then any other value.
-    for (const ctor of present.values()) explore(ctor);
-    for (const witness of others) witnesses.push({ head: ANY, tail: witness });
-    return witnesses;
+    return result;
   }
+}
+
+/** A witness of a constructor's argument columns and the columns after them, as a witness of the constructor and those after. */
+function applyCtor(ctor: Ctor, witness: Vector): Vector {
+  const args: Pat[] = [];
+  let rest = witness;
+  for (let index = 0; index < ctor.arity; index += 1) {
+    args.push(rest!.head);
+    rest = rest!.tail;
+  }
+  return { head: { tag: "ctor", ctor, args }, tail: rest };
 }
 
 /** A vector of patterns as a linked list; null is the empty vector. */

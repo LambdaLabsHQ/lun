@@ -47,6 +47,13 @@ test("norn parse --json prints the norn-ast document on one line", () => {
   assert.deepEqual(document.program.body.map((item: { kind: string }) => item.kind), ["TypeDecl", "Switch"]);
 });
 
+test("norn parse --json writes version 2 only for a tree that needs it", () => {
+  assert.equal(JSON.parse(norn(["parse", "--json", "examples/push.norn"]).stdout).version, 1);
+  const host = JSON.parse(norn(["parse", "--json", "hosts/reference.norn"]).stdout);
+  assert.equal(host.version, 2);
+  assert.deepEqual([...new Set(host.program.body.map((item: { kind: string }) => item.kind))], ["TypeDecl", "External"]);
+});
+
 test("norn parse - reads standard input", () => {
   const result = norn(["parse", "--json", "-"], "say(@alice, `hi`)\n");
   assert.equal(result.status, 0);
