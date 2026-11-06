@@ -52,6 +52,24 @@ sequential and rearms a relative timer after each callback; it does not claim
 fixed-cadence or coalescing semantics. A production host also needs an alarm
 adapter; advancing the virtual clock is not a background polling service.
 
+An unsuccessful `forEach` handler outcome (`Declined`, `Failed`, `TimedOut`,
+`Cancelled` or `Revoked`) atomically queues an `execution.handler_failed`
+notification for the host to deliver to the program's author. Its continuation
+then listens for the next occurrence. A crash cannot advance past reporting
+without the notification intent, or create that intent twice for the same
+checkpoint. The simulated host records only a simulated delivery receipt;
+real author routing remains the production host's responsibility. Unit and
+`Done(_)` rearm without a notification. Unchecked callbacks returning another
+type discard the value; the typing rules reject them unless wrapped in
+`ignore(x)`. `ignore` evaluates its argument and yields unit, so it can
+explicitly discard an outcome as well. Calling `fail(o)` still terminates the
+program and queues the terminal failure notice.
+
+The same rule applies at the program boundary: a final unsuccessful outcome
+fails the program and queues its terminal notice. A function can still return
+that outcome for its caller to inspect; `Done(_)` and ordinary final values
+complete normally.
+
 `merge(a, b)` preserves the winning occurrence's value. `or(a, b)` accepts
 different stream element types and yields unit on either occurrence, including
 when nested inside another composition. `never()` has no occurrences: waiting
