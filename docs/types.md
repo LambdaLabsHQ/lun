@@ -52,7 +52,7 @@ can act on.
 
 ## 3. Constrained type variables
 
-Four small closed classes stand in for overloading. A constrained variable
+Five small closed classes stand in for overloading. A constrained variable
 checks membership when it meets a concrete type. Two constrained variables
 meet in their intersection. Generalization keeps the constraint, so a helper
 that compares its arguments stays generic over every ordered type.
@@ -63,6 +63,7 @@ that compares its arguments stays generic over every ordered type.
 | `equality` | every type with no function inside | `==` `!=`, literal patterns |
 | `deadline` | `time`, `duration` | `~until`, `after` |
 | `addressee` | `participant`, `ref` | `say` |
+| `handled` | `unit`, `outcome<_>` | the handler of `forEach` |
 
 Arithmetic is not overloaded, as in ReScript:
 
@@ -110,7 +111,8 @@ returned unchanged.
 | `or` | `(stream<'a>, stream<'b>) => stream<unit>` |
 | `map` | `(stream<'a>, ('a) => 'b) => stream<'b>` |
 | `filter` | `(stream<'a>, ('a) => bool) => stream<'a>` |
-| `forEach` | `(stream<'a>, ('a) => 'b) => 'c` |
+| `forEach` | `(stream<'a>, ('a) => 'h) => 'c`, where `'h` is `handled` |
+| `ignore` | `('a) => unit` |
 
 Notes:
 
@@ -124,6 +126,16 @@ Notes:
   - To keep values from different streams, map them into one variant first,
     then `merge` them.
 - **`forEach` never returns.** It handles occurrences until the program ends.
+  - **What the handler returns:**
+    - **`()` or `Done(_)`:** the loop takes the next occurrence.
+    - **Any other outcome:** the outcome is reported to the program's author,
+      and the loop goes on. One failed run does not end a standing duty, and
+      the failure is not silent.
+    - **To end the program**, the handler calls `fail(o)`.
+    - **For an effect whose result does not matter**, wrap it in `ignore`.
+  - **Other return types are an error.** A handler that returns an `int` or
+    a `request` is probably a mistake. A runtime given unchecked code
+    discards such values.
 - **`report`** is a type the host declares (§7).
 
 ## 6. Exhaustiveness
@@ -202,4 +214,4 @@ error: this switch does not handle Declined(_) or Revoked at examples/decide.nor
 - modules other than `Std`;
 - row polymorphism and effect polymorphism;
 - request races (`any`), which will come with durable `scope`;
-- classes other than the four in §3.
+- classes other than the five in §3.
