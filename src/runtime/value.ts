@@ -32,6 +32,10 @@ export function equal(a: Value, b: Value): boolean {
   if (a.type === "variant" && b.type === "variant") return a.name === b.name && equalValues(a.args, b.args);
   if ((a.type === "list" || a.type === "tuple") && (b.type === "list" || b.type === "tuple")) return equalValues(a.values, b.values);
   if (a.type === "float" && b.type === "float") return Number(a.value) === Number(b.value);
+  if (a.type === "participant" && b.type === "participant") return a.name === b.name && a.instance === b.instance &&
+    equal({ type: "record", fields: a.labels }, { type: "record", fields: b.labels });
+  if (a.type === "source" && b.type === "source") return a.name === b.name && a.kind === b.kind && equalValues(a.args, b.args) &&
+    equal({ type: "record", fields: a.labels }, { type: "record", fields: b.labels });
   // Other structured values are descriptors with a canonical field order.
   return JSON.stringify(a) === JSON.stringify(b);
 }

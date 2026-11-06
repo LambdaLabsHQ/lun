@@ -8,7 +8,7 @@ import {
 } from "./persistence.ts";
 
 type Row = Record<string, unknown>;
-const schemaVersion = 3;
+const schemaVersion = 4;
 const terminal = new Set<ExecutionStatus>(["completed", "failed", "cancelled", "revoked"]);
 const activeSql = "e.status IN ('ready', 'suspended')";
 
@@ -73,6 +73,7 @@ export class SqliteStore implements DurableStore {
           const tables = this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
           if (tables.length) throw new Error("Refusing to initialize a nonempty database without a Norn schema version");
           this.db.exec(`
+            CREATE TABLE codes (id TEXT PRIMARY KEY, ast TEXT NOT NULL);
             CREATE TABLE executions (
               id TEXT PRIMARY KEY, revision INTEGER NOT NULL, code_id TEXT NOT NULL,
               machine_version TEXT NOT NULL, status TEXT NOT NULL, snapshot TEXT NOT NULL,
@@ -102,7 +103,7 @@ export class SqliteStore implements DurableStore {
             CREATE INDEX effects_execution ON effects(execution_id, revision, ordinal);
             CREATE INDEX effects_recovery ON effects(status, lease_until, id);
             CREATE INDEX requests_execution ON requests(execution_id);
-            PRAGMA user_version = 3;
+            PRAGMA user_version = 4;
           `);
         } else if (version !== schemaVersion) {
           throw new Error(`Unsupported Norn store version ${version}; migration is required`);
@@ -163,6 +164,17 @@ export class SqliteStore implements DurableStore {
     const args = effect.arguments as { requestId: string; epoch: number; holder: string };
     const request = this.readRequest(args.requestId);
     return request !== null && request.outcome === null && request.epoch === args.epoch && request.holder === args.holder;
+  }
+  async saveCode(codeId: string, ast: string): Promise<void> {
+    this.transaction(() => {
+      const row = this.db.prepare("SELECT ast FROM codes WHERE id = ?").get(codeId);
+      if (row && row.ast !== ast) throw new Error("Pinned AST identity cannot be overwritten");
+      if (!row) this.db.prepare("INSERT INTO codes(id, ast) VALUES (?, ?)").run(codeId, ast);
+    });
+  }
+  async loadCode(codeId: string): Promise<string | null> {
+    const row = this.db.prepare("SELECT ast FROM codes WHERE id = ?").get(codeId);
+    return row ? row.ast as string : null;
   }
   async create(initial: InitialCheckpoint): Promise<boolean> {
     const waiting = initial.waitingFor ?? null;
@@ -391,12 +403,12 @@ export class SqliteStore implements DurableStore {
     clock(now);
     return this.transaction(() => {
     this.resolveWaits(now);
-    return this.db.prepare(`SELECT e.* FROM executions e WHERE e.id > ? AND
+    return this.db.prepare(`SELECT e.* FROM executions e WHERE e.id > ? AND (? IS NULL OR e.code_id = ?) AND
       (e.status = 'ready' OR (e.status = 'suspended' AND (
         (e.wait_kind = 'delivery' AND EXISTS (SELECT 1 FROM effects f WHERE f.id = e.wait_id AND f.status = 'delivered')) OR
         (e.wait_kind = 'request' AND EXISTS (SELECT 1 FROM requests r WHERE r.id = e.wait_id AND r.outcome IS NOT NULL)) OR
         (e.wait_kind = 'wait' AND EXISTS (SELECT 1 FROM waits w WHERE w.id = e.wait_id AND w.outcome IS NOT NULL))
-      ))) ORDER BY e.id LIMIT ?`).all(scan.after ?? "", pageSize(scan)).map(checkpoint);
+      ))) ORDER BY e.id LIMIT ?`).all(scan.after ?? "", scan.codeId ?? null, scan.codeId ?? null, pageSize(scan)).map(checkpoint);
     });
   }
   async close(): Promise<void> { if (!this.closed) { this.db.close(); this.closed = true; } }

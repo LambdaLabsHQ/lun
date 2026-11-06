@@ -77,7 +77,7 @@ export interface DispatchClaim {
   mode: "send" | "reconcile";
 }
 export type RetryEvidence = "host-deduplicates-original-id" | "previous-sender-fenced-and-host-confirmed-absent";
-export interface Scan { after?: string; limit?: number }
+export interface Scan { after?: string; limit?: number; codeId?: string }
 export interface Commit { checkpoint: Checkpoint; effects: StoredEffect[]; requests: StoredRequest[]; waits: StoredWait[] }
 
 /**
@@ -87,6 +87,8 @@ export interface Commit { checkpoint: Checkpoint; effects: StoredEffect[]; reque
  * All adapters are asynchronous, including the synchronous SQLite reference backend.
  */
 export interface DurableStore {
+  saveCode(codeId: string, ast: string): Promise<void>;
+  loadCode(codeId: string): Promise<string | null>;
   create(initial: InitialCheckpoint): Promise<boolean>;
   load(executionId: string): Promise<Checkpoint | null>;
   commit(expected: Checkpoint, change: CheckpointChange): Promise<Commit | null>;

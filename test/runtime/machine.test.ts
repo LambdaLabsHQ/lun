@@ -120,3 +120,18 @@ test("forEach waits after its callback instead of treating the report as another
   assert.equal(m.control.kind, "effect");
   if (m.control.kind === "effect") assert.equal(m.control.effect.name, "wait");
 });
+
+test("pinned code cannot be mutated through the original AST or exposed node table", () => {
+  const literal = int(1), p = program(literal), code = compile(p);
+  literal.value = "2";
+  const machine = advance(code, start(code));
+  assert.deepEqual(machine.control, { kind: "done", value: { type: "int", value: "1" } });
+  const pinned = Object.values(code.nodes).find(x => x.kind === "IntLiteral")!;
+  assert.throws(() => { (pinned as { value: string }).value = "3"; }, TypeError);
+  assert.throws(() => { code.nodes["replacement"] = int(4); }, TypeError);
+});
+
+test("lexical names that resemble JavaScript prototype properties stay ordinary bindings", () => {
+  const p = program(let_("__proto__", str("value")), id("__proto__"));
+  assert.deepEqual(done(p), text("value"));
+});

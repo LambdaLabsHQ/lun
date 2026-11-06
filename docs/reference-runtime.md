@@ -2,6 +2,9 @@
 
 The reference machine executes the versioned AST in `src/frontend/ast.ts`.
 `compile` pins its JSON document by SHA-256 and assigns deterministic node IDs.
+The canonical AST is stored immutably by its hash. `Runtime.restore` reloads that
+artifact rather than reparsing source with a newer parser. The compiler also
+freezes a private AST copy so later caller mutations cannot change pinned code.
 The machine stores control, continuation frames and lexical environments as JSON;
 closures contain a code node ID and environment ID. No native function or native
 stack is persisted. Reload the same code identity and machine ABI to resume it.

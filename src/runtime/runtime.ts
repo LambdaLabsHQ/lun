@@ -1,4 +1,5 @@
-import type { Code } from "./code.ts";
+import { compile, type Code } from "./code.ts";
+import { astFromJson } from "../frontend/json.ts";
 import { advance, machineVersion, resume, start, type Effect, type Machine } from "./machine.ts";
 import { requestId, waitId, type Checkpoint, type CheckpointChange, type DurableStore, type Json, type RequestOutcome, type WaitOutcome, type WaitTarget } from "./persistence.ts";
 import { show, text, unit, variant, type Value } from "./value.ts";
@@ -24,7 +25,7 @@ function milliseconds(value: Value, now: number): number {
 export function eventKey(value: Value): string {
   function canonical(item: unknown): unknown {
     if (Array.isArray(item)) return item.map(canonical);
-    if (item && typeof item === "object") return Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, canonical(v)]));
+    if (item && typeof item === "object") return Object.fromEntries(Object.entries(item).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => [k, canonical(v)]));
     return item;
   }
   return JSON.stringify(canonical(value));
@@ -55,7 +56,17 @@ export class Runtime {
   readonly code: Code;
   private readonly policy: Policy;
   constructor(code: Code, store: DurableStore, policy: Policy) { this.code = code; this.store = store; this.policy = policy; }
+  static async restore(executionId: string, store: DurableStore, policy: Policy): Promise<Runtime> {
+    const checkpoint = await store.load(executionId);
+    if (!checkpoint) throw new Error("Execution not found");
+    const ast = await store.loadCode(checkpoint.codeId);
+    if (ast === null) throw new Error("Pinned AST is missing");
+    const code = compile(astFromJson(ast));
+    if (code.id !== checkpoint.codeId) throw new Error("Stored AST does not match its pinned identity");
+    return new Runtime(code, store, policy);
+  }
   async create(executionId: string, now = 0): Promise<boolean> {
+    await this.store.saveCode(this.code.id, this.code.ast);
     return this.store.create({ executionId, codeId: this.code.id, machineVersion, status: "ready", snapshot: json(start(this.code, now)) });
   }
   async step(executionId: string, now: number, slice = 1_000): Promise<Checkpoint | null> {
@@ -95,6 +106,13 @@ export class Runtime {
       return this.checkpoint(machine, now);
     }
     const { name, args, labels } = effect;
+    const declaredLabels: Record<string, string[]> = { ask: ["options", "until"], run: ["context", "until"],
+      request: [], start: ["context"], wait: ["until"], cancel: [], handOver: [], status: [], say: [], judge: ["about"] };
+    for (const label of Object.keys(labels)) if (!declaredLabels[name]?.includes(label)) throw new Error(`Unknown ${name} label ${label}`);
+    if (name === "ask" && labels.options && (labels.options.type !== "list" || !labels.options.values.length || labels.options.values.some(v => v.type !== "variant"))) {
+      throw new Error("ask options must be a nonempty list of variants");
+    }
+
     const base: CheckpointChange = { status: "ready", snapshot: json(machine), now };
     const finish = (value: Value) => { resume(machine, value, now); return { ...base, snapshot: json(machine) }; };
     const until = labels.until ? milliseconds(labels.until, now) : null;
@@ -127,7 +145,7 @@ export class Runtime {
   async runReady(now: number, slices = 100): Promise<number> {
     let count = 0;
     while (count < slices) {
-      const ready = await this.store.scanReady(now, { limit: slices - count });
+      const ready = await this.store.scanReady(now, { limit: slices - count, codeId: this.code.id });
       if (!ready.length) break;
       for (const execution of ready) {
         if (execution.codeId === this.code.id) { await this.step(execution.executionId, now); count++; }

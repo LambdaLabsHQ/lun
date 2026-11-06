@@ -51,7 +51,7 @@ export function resume(machine: Machine, value: Value, now: number): Machine {
 }
 function environment(machine: Machine, parent: string, bindings: Record<string, Value>): string {
   const id = `e${machine.nextEnvironment++}`;
-  machine.environments[id] = { parent, bindings }; return id;
+  machine.environments[id] = { parent, bindings: Object.assign(Object.create(null), bindings) }; return id;
 }
 function lookup(machine: Machine, env: string, name: string): Value {
   let current: string | null = env;
@@ -333,7 +333,9 @@ function accept(code: Code, machine: Machine, value: Value): void {
       break;
     }
     case "default": {
-      Object.assign(machine.environments[frame.env].bindings, bindings(code.nodes[frame.pattern] as Pattern, value));
+      for (const [name, bound] of Object.entries(bindings(code.nodes[frame.pattern] as Pattern, value))) {
+        Object.defineProperty(machine.environments[frame.env].bindings, name, { value: bound, enumerable: true, writable: true, configurable: true });
+      }
       enterFunction(code, machine, code.nodes[frame.lambda] as Lambda, frame.env, frame.remaining); break;
     }
     case "forEach": {

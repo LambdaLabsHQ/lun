@@ -46,6 +46,9 @@ export class SimulatedHost implements Policy {
         if (claim.mode === "reconcile") {
           await this.store.markUncertain(claim, "No simulated transport evidence; explicit reconciliation required", this.now); continue;
         }
+        if (effect.operation === "say" && !this.permitted) {
+          await this.store.markUncertain(claim, "Permission revoked before message delivery", this.now); continue;
+        }
         if (effect.operation === "request.offer") {
           const args = effect.arguments as { requestId: string; epoch: number; holder: string };
           const current = await this.store.request(args.requestId);

@@ -1,15 +1,23 @@
 import { createHash } from "node:crypto";
 import { NODE_FIELDS, type AstNode, type Program } from "../frontend/ast.ts";
-import { astToJson } from "../frontend/json.ts";
+import { astToJson, astFromJson } from "../frontend/json.ts";
 
 /** Pinned code is kept separately from a serializable machine checkpoint. */
 export interface Code {
   id: string;
+  ast: string;
   root: string;
   nodes: Record<string, AstNode>;
   nodeId(node: AstNode): string;
 }
 export function compile(program: Program): Code {
+  const ast = astToJson(program);
+  const pinned = astFromJson(ast);
+  function freeze(value: unknown): void {
+    if (!value || typeof value !== "object" || Object.isFrozen(value)) return;
+    Object.freeze(value); Object.values(value).forEach(freeze);
+  }
+  freeze(pinned);
   const ids = new WeakMap<object, string>();
   const nodes: Record<string, AstNode> = Object.create(null);
   let nextNode = 0;
@@ -22,10 +30,12 @@ export function compile(program: Program): Code {
     ids.set(node, id); nodes[id] = node;
     for (const field of NODE_FIELDS[node.kind]) visit((node as unknown as Record<string, unknown>)[field]);
   }
-  visit(program);
-  return {
-    id: `sha256:${createHash("sha256").update(astToJson(program)).digest("hex")}`,
-    root: ids.get(program)!, nodes,
-    nodeId(node) { const id = ids.get(node); if (!id) throw new Error("Node does not belong to pinned code"); return id; },
-  };
+  visit(pinned);
+  Object.freeze(nodes);
+  return Object.freeze({
+    ast,
+    id: `sha256:${createHash("sha256").update(ast).digest("hex")}`,
+    root: ids.get(pinned)!, nodes,
+    nodeId(node: AstNode) { const id = ids.get(node); if (!id) throw new Error("Node does not belong to pinned code"); return id; },
+  });
 }

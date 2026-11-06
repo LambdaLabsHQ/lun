@@ -71,7 +71,7 @@ recording an input alone never runs user code.
 
 SQLite uses full synchronous commits and serializes initialization and writes.
 Connection startup leaves journal mode unchanged to avoid a concurrent WAL-mode
-initialization race. Experimental schema version 3 refuses older/newer versions;
+initialization race. Experimental schema version 4 refuses older/newer versions;
 it does not silently reinterpret snapshots or rewrite an unsupported store.
 
 New database files are owner-only. Supply a private parent directory; existing
