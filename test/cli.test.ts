@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const cli = join(root, "src/cli.ts");
 
 function norn(args: string[], input?: string) {
-  const result = spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8", input });
+  const result = spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8", input, maxBuffer: 1 << 30 });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
@@ -37,9 +37,10 @@ test("norn parse prints an outline of the tree", () => {
   assert.ok(lines.includes(`            DurationLiteral amount="1" unit="d"  2:7-2:9`));
 });
 
-test("norn parse --json prints the norn-ast document", () => {
+test("norn parse --json prints the norn-ast document on one line", () => {
   const result = norn(["parse", "--json", "examples/decide.norn"]);
   assert.equal(result.status, 0);
+  assert.equal(result.stdout.indexOf("\n"), result.stdout.length - 1);
   const document = JSON.parse(result.stdout);
   assert.equal(document.format, "norn-ast");
   assert.equal(document.version, 1);
@@ -96,4 +97,19 @@ test("unreadable files and bad arguments are usage errors", () => {
   assert.equal(norn(["parse", "a.norn", "b.norn"]).stderr, "norn: parse takes exactly one file\n");
   assert.equal(norn(["parse", "--yaml", "a.norn"]).stderr, "norn: unknown option '--yaml' for parse\n");
   assert.equal(norn(["check", "docs"]).stderr, "norn: no .norn files under docs\n");
+});
+
+test("a 10,000-link chain prints, and nesting deeper than the stack is a clean error", () => {
+  const chain = norn(["parse", "--json", "-"], `x${"->f".repeat(10_000)}\n`);
+  assert.equal(chain.status, 0, chain.stderr);
+  assert.equal(JSON.parse(chain.stdout).program.body[0].kind, "Pipe");
+  // An outline's indentation grows with depth, so its size grows with the square of the chain's length.
+  const outline = norn(["parse", "-"], `x${"->f".repeat(1_000)}\n`);
+  assert.equal(outline.status, 0, outline.stderr);
+  assert.equal(outline.stdout.split("\n").length, 2_004);
+
+  const deep = norn(["check", "-"], `let x = ${"(".repeat(200_000)}\n`);
+  assert.equal(deep.status, 1);
+  assert.match(deep.stderr, /^error: the program nests deeper than this implementation's stack can follow at <stdin>:1:\d+\n 1 \| let x = \(/);
+  assert.doesNotMatch(deep.stderr, /RangeError|    at /);
 });

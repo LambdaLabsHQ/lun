@@ -637,3 +637,148 @@ export const NODE_FIELDS = {
 type UnlistedFields = { [K in NodeKind]: Exclude<FieldsOf<K>, (typeof NODE_FIELDS)[K][number]> }[NodeKind];
 const allFieldsListed: [UnlistedFields] extends [never] ? true : UnlistedFields = true;
 void allFieldsListed;
+
+// ---------------------------------------------------------------------------
+// Schema: what each field may hold. Reading the JSON form checks every node
+// against it (json.ts), so a document read back is a well-formed tree.
+
+const EXPRESSION_KINDS = [
+  "IntLiteral", "FloatLiteral", "StringLiteral", "TemplateLiteral", "BoolLiteral", "UnitLiteral", "TimeLiteral",
+  "DurationLiteral", "ParticipantLiteral", "RefLiteral", "Identifier", "Constructor", "TupleLiteral", "ListLiteral",
+  "RecordLiteral", "FieldAccess", "Call", "Pipe", "Try", "Unary", "Binary", "Lambda", "Block", "If", "Switch",
+] as const satisfies readonly Expression["kind"][];
+
+/** Patterns other than `OrPattern`, which is never directly inside another one. */
+const ALTERNATIVE_KINDS = [
+  "WildcardPattern", "VarPattern", "LiteralPattern", "ConstructorPattern", "TuplePattern", "ListPattern", "RecordPattern",
+] as const satisfies readonly Pattern["kind"][];
+
+const PATTERN_KINDS = [...ALTERNATIVE_KINDS, "OrPattern"] as const;
+const TYPE_KINDS = ["TypeName", "TypeVar", "TupleType"] as const satisfies readonly TypeExpression["kind"][];
+const STATEMENT_KINDS = ["Let", "LetRec", ...EXPRESSION_KINDS] as const;
+
+/** The unions of ast.ts as lists of kinds, by the name an error message uses for them. */
+export const NODE_GROUPS = {
+  "top-level item": ["TypeDecl", "Open", ...STATEMENT_KINDS],
+  statement: STATEMENT_KINDS,
+  expression: EXPRESSION_KINDS,
+  argument: [...EXPRESSION_KINDS, "LabelledArg"],
+  parameter: [...PATTERN_KINDS, "LabelledParam"],
+  pattern: PATTERN_KINDS,
+  type: TYPE_KINDS,
+} as const satisfies { readonly [group: string]: readonly NodeKind[] };
+
+export type NodeGroup = keyof typeof NODE_GROUPS;
+
+// Fails to compile if a group leaves out a kind of its union.
+type Unlisted<Union, Listed extends readonly unknown[]> = Exclude<Union, Listed[number]>;
+type UnlistedKinds =
+  | Unlisted<TopLevelItem["kind"], (typeof NODE_GROUPS)["top-level item"]>
+  | Unlisted<Statement["kind"], typeof STATEMENT_KINDS>
+  | Unlisted<Expression["kind"], typeof EXPRESSION_KINDS>
+  | Unlisted<Argument["kind"], (typeof NODE_GROUPS)["argument"]>
+  | Unlisted<Parameter["kind"], (typeof NODE_GROUPS)["parameter"]>
+  | Unlisted<Pattern["kind"], typeof PATTERN_KINDS>
+  | Unlisted<TypeExpression["kind"], typeof TYPE_KINDS>;
+const allKindsGrouped: [UnlistedKinds] extends [never] ? true : UnlistedKinds = true;
+void allKindsGrouped;
+
+/**
+ * What a field may hold:
+ * - `"string"`, `"boolean"`; `"number"` is finite, `"integer"` a safe integer;
+ * - `"decimal"` is a canonical decimal string such as `"0"`, `"42"` or `"-1"`,
+ *   and `"digits"` one without a sign;
+ * - `oneOf`: one of these strings;
+ * - `node`: a node of a group, or of one of the listed kinds;
+ * - `list`: a list of at least `min` items;
+ * - `nullable`: null, or what the inner schema allows.
+ */
+export type FieldSchema =
+  | "string"
+  | "boolean"
+  | "number"
+  | "integer"
+  | "decimal"
+  | "digits"
+  | { readonly oneOf: readonly string[] }
+  | { readonly node: NodeGroup | readonly NodeKind[] }
+  | { readonly list: FieldSchema; readonly min: number }
+  | { readonly nullable: FieldSchema };
+
+const node = (kinds: NodeGroup | readonly NodeKind[]) => ({ node: kinds });
+const list = (of: FieldSchema, min = 0) => ({ list: of, min });
+const nullable = (of: FieldSchema) => ({ nullable: of });
+const expression = node("expression");
+const pattern = node("pattern");
+const type = node("type");
+
+const UNARY_OPERATORS = ["!", "-", "-."] as const satisfies readonly UnaryOperator[];
+const BINARY_OPERATORS = [
+  "||", "&&", "==", "!=", "<", "<=", ">", ">=", "+", "-", "++", "+.", "-.", "*", "/", "*.", "/.",
+] as const satisfies readonly BinaryOperator[];
+const DURATION_UNITS = ["m", "h", "d", "w"] as const satisfies readonly DurationUnit[];
+const REF_KINDS = ["doc", "channel"] as const satisfies readonly RefKind[];
+
+// Fail to compile if an enumeration leaves out a value of its type.
+type UnlistedValues =
+  | Unlisted<UnaryOperator, typeof UNARY_OPERATORS>
+  | Unlisted<BinaryOperator, typeof BINARY_OPERATORS>
+  | Unlisted<DurationUnit, typeof DURATION_UNITS>
+  | Unlisted<RefKind, typeof REF_KINDS>;
+const allValuesListed: [UnlistedValues] extends [never] ? true : UnlistedValues = true;
+void allValuesListed;
+
+/** The schema of every field of every node kind. The compiler checks that it covers each field. */
+export const NODE_SCHEMA: { readonly [K in NodeKind]: { readonly [F in FieldsOf<K>]: FieldSchema } } = {
+  Program: { body: list(node("top-level item")) },
+  TypeDecl: { name: "string", params: list(node(["TypeVar"])), definition: node(["VariantType", "RecordType", ...TYPE_KINDS]) },
+  Open: { module: { oneOf: ["Std"] } },
+  Let: { pattern, value: expression },
+  LetRec: { bindings: list(node(["RecBinding"]), 1) },
+  RecBinding: { name: "string", value: node(["Lambda"]) },
+  IntLiteral: { value: "decimal" },
+  FloatLiteral: { value: "number" },
+  StringLiteral: { value: "string" },
+  TemplateLiteral: { strings: list("string", 1), expressions: list(expression) },
+  BoolLiteral: { value: "boolean" },
+  UnitLiteral: {},
+  TimeLiteral: { value: "string", epochMs: "integer", offsetMinutes: "integer" },
+  DurationLiteral: { amount: "digits", unit: { oneOf: DURATION_UNITS } },
+  ParticipantLiteral: { name: "string", instance: nullable("digits"), args: list(node(["LabelledArg"])) },
+  RefLiteral: { refKind: { oneOf: REF_KINDS }, value: "string" },
+  Identifier: { name: "string" },
+  Constructor: { name: "string", args: list(expression) },
+  TupleLiteral: { elements: list(expression, 2) },
+  ListLiteral: { elements: list(expression), rest: nullable(expression) },
+  RecordLiteral: { spread: nullable(expression), fields: list(node(["RecordField"])) },
+  RecordField: { name: "string", value: expression },
+  FieldAccess: { record: expression, field: "string" },
+  Call: { callee: expression, args: list(node("argument")) },
+  Pipe: { left: expression, callee: expression, args: list(node("argument")) },
+  Try: { operand: expression },
+  Unary: { op: { oneOf: UNARY_OPERATORS }, operand: expression },
+  Binary: { op: { oneOf: BINARY_OPERATORS }, left: expression, right: expression },
+  Lambda: { params: list(node("parameter")), body: expression },
+  Block: { body: list(node("statement")) },
+  If: { condition: expression, thenBranch: node(["Block"]), elseBranch: nullable(node(["Block", "If"])) },
+  Switch: { scrutinee: expression, cases: list(node(["Case"]), 1) },
+  Case: { pattern, guard: nullable(expression), body: expression },
+  LabelledArg: { label: "string", value: expression },
+  LabelledParam: { label: "string", pattern, defaultValue: nullable(expression) },
+  WildcardPattern: {},
+  VarPattern: { name: "string" },
+  LiteralPattern: { literal: node(["IntLiteral", "FloatLiteral", "StringLiteral", "BoolLiteral", "UnitLiteral"]) },
+  ConstructorPattern: { name: "string", args: list(pattern) },
+  TuplePattern: { elements: list(pattern, 2) },
+  ListPattern: { elements: list(pattern), rest: nullable(pattern) },
+  RecordPattern: { fields: list(node(["FieldPattern"]), 1) },
+  FieldPattern: { name: "string", pattern },
+  OrPattern: { alternatives: list(node(ALTERNATIVE_KINDS), 2) },
+  TypeName: { name: "string", args: list(type) },
+  TypeVar: { name: "string" },
+  TupleType: { elements: list(type, 2) },
+  VariantType: { constructors: list(node(["ConstructorDecl"]), 1) },
+  ConstructorDecl: { name: "string", args: list(type) },
+  RecordType: { fields: list(node(["FieldDecl"]), 1) },
+  FieldDecl: { name: "string", type },
+};

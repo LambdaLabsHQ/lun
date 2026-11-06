@@ -6,12 +6,15 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
-import { astToJson, formatDiagnostic, formatTree, parse, type Diagnostic } from "./frontend/index.ts";
+import {
+  STACK_EXHAUSTED, astToJson, formatDiagnostic, isStackExhausted, parse, treeLines, type Diagnostic,
+} from "./frontend/index.ts";
 
 const usage = `Usage: norn <command> [options]
 
 Commands:
-  parse [--json] <file>   Print the syntax tree of a .norn file ('-' reads standard input)
+  parse [--json] <file>   Print the syntax tree of a .norn file as an outline, or as
+                          norn-ast JSON on one line ('-' reads standard input)
   check <path>...         Report syntax errors in .norn files and in directories of them
   help                    Show this help
 
@@ -20,7 +23,7 @@ Exit status: 0 without errors, 1 if a file has syntax errors, 2 on a usage or re
 
 class UsageError extends Error {}
 
-function main(argv: string[]): number {
+async function main(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
   try {
     switch (command) {
@@ -31,41 +34,58 @@ function main(argv: string[]): number {
         process.stdout.write(usage);
         return 0;
       case "parse":
-        return parseCommand(args);
+        return await parseCommand(args);
       case "check":
-        return checkCommand(args);
+        return await checkCommand(args);
       default:
         throw new UsageError(`unknown command '${command}'\n\n${usage}`);
     }
   } catch (error) {
+    if (isStackExhausted(error)) {
+      process.stderr.write(`norn: ${STACK_EXHAUSTED}\n`);
+      return 1;
+    }
     if (!(error instanceof UsageError)) throw error;
     process.stderr.write(`norn: ${error.message.endsWith("\n") ? error.message : `${error.message}\n`}`);
     return 2;
   }
 }
 
-function parseCommand(args: string[]): number {
+async function parseCommand(args: string[]): Promise<number> {
   const json = args.includes("--json");
   const files = args.filter((arg) => arg !== "--json");
   const option = files.find((arg) => arg.startsWith("-") && arg !== "-");
   if (option !== undefined) throw new UsageError(`unknown option '${option}' for parse`);
   const [file] = files;
   if (file === undefined || files.length > 1) throw new UsageError("parse takes exactly one file");
-  const source = read(file);
+  const source = await read(file);
   const result = parse(source);
   if (!result.ok) {
     report(result.diagnostics, source, displayName(file));
     return 1;
   }
-  process.stdout.write(json ? astToJson(result.program) : formatTree(result.program));
+  if (json) {
+    process.stdout.write(`${astToJson(result.program)}\n`);
+  } else {
+    // Written in pieces: the outline of a very deep tree is too large to hold as one string.
+    let chunk = "";
+    for (const line of treeLines(result.program)) {
+      chunk += `${line}\n`;
+      if (chunk.length >= 1 << 16) {
+        process.stdout.write(chunk);
+        chunk = "";
+      }
+    }
+    process.stdout.write(chunk);
+  }
   return 0;
 }
 
-function checkCommand(args: string[]): number {
+async function checkCommand(args: string[]): Promise<number> {
   if (args.length === 0) throw new UsageError("check needs at least one file or directory");
   let failed = 0;
   for (const file of args.flatMap(expand)) {
-    const source = read(file);
+    const source = await read(file);
     const result = parse(source);
     if (result.ok) {
       process.stdout.write(`${displayName(file)}: ok\n`);
@@ -87,9 +107,13 @@ function displayName(file: string): string {
   return file === "-" ? "<stdin>" : file;
 }
 
-function read(file: string): string {
+/** A file, or standard input for '-'. Standard input is read as a stream: a pipe may not be readable at once. */
+async function read(file: string): Promise<string> {
   try {
-    return readFileSync(file === "-" ? 0 : file, "utf8");
+    if (file !== "-") return readFileSync(file, "utf8");
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+    return Buffer.concat(chunks).toString("utf8");
   } catch (error) {
     throw new UsageError(`cannot read ${file}: ${describeError(error)}`);
   }
@@ -127,4 +151,4 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-process.exitCode = main(process.argv.slice(2));
+process.exitCode = await main(process.argv.slice(2));

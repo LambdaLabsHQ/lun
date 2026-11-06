@@ -77,3 +77,27 @@ export function preorderKinds(root: unknown): string[] {
   visit(root);
   return kinds;
 }
+
+/**
+ * norn-ast JSON laid out for reading, as the snapshots store it: indented by
+ * two spaces, with each span on one line. For the small trees of tests only.
+ */
+export function prettyAstJson(text: string): string {
+  const inline = (value: unknown): boolean =>
+    typeof value !== "object" || value === null || (!Array.isArray(value) && !("kind" in value) && Object.values(value).every(inline));
+  const oneLine = (value: unknown): string =>
+    typeof value !== "object" || value === null
+      ? JSON.stringify(value)
+      : `{${Object.entries(value).map(([key, child]) => `${JSON.stringify(key)}: ${oneLine(child)}`).join(", ")}}`;
+  const layout = (value: unknown, indent: string): string => {
+    if (inline(value)) return oneLine(value);
+    const inner = `${indent}  `;
+    if (Array.isArray(value)) {
+      if (value.length === 0 || value.every(inline)) return `[${value.map(oneLine).join(", ")}]`;
+      return `[\n${value.map((item) => inner + layout(item, inner)).join(",\n")}\n${indent}]`;
+    }
+    const entries = Object.entries(value as object).map(([key, child]) => `${inner}${JSON.stringify(key)}: ${layout(child, inner)}`);
+    return `{\n${entries.join(",\n")}\n${indent}}`;
+  };
+  return `${layout(JSON.parse(text), "")}\n`;
+}

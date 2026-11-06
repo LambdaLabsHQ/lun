@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { test } from "node:test";
 import { NODE_FIELDS, astFromJson, astToJson, type AstNode, type Pos } from "../../src/frontend/index.ts";
-import { assertNoSharedObjects, parseOk, preorderKinds } from "./helpers.ts";
+import { assertNoSharedObjects, parseOk, preorderKinds, prettyAstJson } from "./helpers.ts";
 
 const root = new URL("../../", import.meta.url);
 const read = (path: string) => readFileSync(new URL(path, root), "utf8");
@@ -37,10 +37,11 @@ for (const path of programs) {
   });
 }
 
-// Set UPDATE_SNAPSHOTS=1 to rewrite the snapshots after an intended change to the tree.
+// The snapshots hold the JSON laid out for reading; astToJson writes the same document on one line.
+// Set UPDATE_SNAPSHOTS=1 to rewrite them after an intended change to the tree.
 for (const name of ["decide", "push"]) {
   test(`examples/${name}.norn matches its AST snapshot`, () => {
-    const actual = astToJson(parseOk(read(`examples/${name}.norn`)));
+    const actual = prettyAstJson(astToJson(parseOk(read(`examples/${name}.norn`))));
     const snapshot = `test/frontend/snapshots/${name}.ast.json`;
     if (process.env["UPDATE_SNAPSHOTS"] === "1") writeFileSync(new URL(snapshot, root), actual);
     assert.equal(actual, read(snapshot));
