@@ -1,5 +1,4 @@
-import { compile, type Code } from "./code.ts";
-import { astFromJson } from "../frontend/json.ts";
+import { compileAstJson, type Code } from "./code.ts";
 import { advance, machineVersion, resume, start, type Effect, type Machine } from "./machine.ts";
 import { requestId, waitId, type Checkpoint, type CheckpointChange, type DurableStore, type Json, type RequestOutcome, type WaitOutcome, type WaitTarget } from "./persistence.ts";
 import { show, text, unit, variant, type Value } from "./value.ts";
@@ -38,8 +37,11 @@ function targets(source: Value, now: number): WaitTarget[] {
   if (source.name === "merge") return source.args.flatMap(s => targets(s, now));
   if (source.name === "map" || source.name === "filter") throw new ProgramError("Stream map/filter are not implemented by the reference host yet");
   if (source.name === "after" || source.name === "every") {
-    if (source.args.length !== 1 || source.args[0].type !== "duration" || BigInt(source.args[0].value) <= 0n) throw new ProgramError("A timer needs one positive duration");
-    return [{ kind: "timer", at: milliseconds(source.args[0], now) }];
+    if (source.args.length !== 1 || Object.keys(source.labels).length) throw new ProgramError("A timer needs one positional argument");
+    const when = source.args[0];
+    if (source.name === "after" && when.type === "time") return [{ kind: "timer", at: milliseconds(when, now) }];
+    if (when.type !== "duration" || BigInt(when.value) <= 0n) throw new ProgramError("A relative timer needs a positive duration");
+    return [{ kind: "timer", at: milliseconds(when, now) }];
   }
   return [{ kind: "event", mode: source.kind, key: eventKey(source) }];
 }
@@ -63,7 +65,7 @@ export class Runtime {
     if (!checkpoint) throw new Error("Execution not found");
     const ast = await store.loadCode(checkpoint.codeId);
     if (ast === null) throw new Error("Pinned AST is missing");
-    const code = compile(astFromJson(ast));
+    const code = compileAstJson(ast);
     if (code.id !== checkpoint.codeId) throw new Error("Stored AST does not match its pinned identity");
     return new Runtime(code, store, policy);
   }

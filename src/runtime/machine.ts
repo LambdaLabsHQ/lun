@@ -38,7 +38,7 @@ export interface Machine {
 const factBuiltins = new Set(["merged", "released", "machineUpdated", "replied", "runEnded"]);
 const streamBuiltins = new Set(["every", "after", "ciFailed", "prActivity", "docChanged", "message"]);
 const effectBuiltins = new Set(["ask", "run", "request", "start", "wait", "cancel", "handOver", "status", "say", "judge"]);
-const builtins = new Set([...factBuiltins, ...streamBuiltins, ...effectBuiltins, "now", "fail", "merge", "map", "filter", "forEach"]);
+const builtins = new Set([...factBuiltins, ...streamBuiltins, ...effectBuiltins, "now", "show", "fail", "merge", "map", "filter", "forEach"]);
 
 export function start(code: Code, now = 0): Machine {
   return { version: machineVersion, codeId: code.id, control: { kind: "eval", node: code.root, env: "e0" }, frames: [],
@@ -198,6 +198,8 @@ function builtin(code: Code, machine: Machine, name: string, args: Value[], labe
   if (factBuiltins.has(name) || streamBuiltins.has(name)) {
     value = { type: "source", kind: factBuiltins.has(name) ? "fact" : "stream", name, args, labels };
   } else switch (name) {
+    case "show": if (args.length !== 1 || Object.keys(labels).length) throw new Error("show needs one positional argument");
+      value = text(show(args[0])); break;
     case "now": if (args.length || Object.keys(labels).length) throw new Error("now takes no arguments");
       value = { type: "time", value: String(machine.resumedAt) }; break;
     case "fail": machine.frames = []; machine.control = { kind: "failed", outcome: args[0] ?? variant("Failed", text("fail requires an outcome")) }; return;

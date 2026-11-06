@@ -8,7 +8,9 @@ also freezes a private AST copy so later caller mutations cannot change pinned
 code. The machine stores control, continuation frames and lexical environments
 as JSON; closures contain a code node ID and environment ID. No native function
 or native stack is persisted. Reload the same code identity and machine ABI to
-resume it.
+resume it. Freezing and numbering use explicit work stacks for deep trees.
+Restoration hashes the original stored JSON bytes without running them through
+a newer writer, so whitespace changes cannot replace an existing identity.
 
 `advance` evaluates a finite time slice. Exhausting that slice yields a ready
 machine, not a failed program. Tail calls discard completed sequence frames, and
@@ -49,6 +51,12 @@ Unsupported operations fail visibly. The initial `forEach` machine helper is
 sequential and rearms a relative timer after each callback; it does not claim
 fixed-cadence or coalescing semantics. A production host also needs an alarm
 adapter; advancing the virtual clock is not a background polling service.
+
+`after` accepts a positive duration or an absolute time. An absolute time already
+reached when the wait is registered is ready immediately; `every` continues to
+require a positive duration. `show(x)` is a pure built-in, also usable as
+`x->show`, with the same readable time, duration, participant and variant text
+used by string interpolation.
 
 The runtime remains separate from xMatrix's production mechanisms. No schedule,
 approval, request or PR subscription has been migrated by this prototype.
