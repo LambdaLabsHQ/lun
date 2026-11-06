@@ -1,3 +1,4 @@
+import { VirtualClock } from "../../src/runtime/clock.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,12 +18,13 @@ const initial: InitialCheckpoint = {
 function fixture(t: { after: (fn: () => Promise<void>) => void }) {
   const directory = mkdtempSync(join(tmpdir(), "norn-store-"));
   const path = join(directory, "runtime.sqlite");
+  const clock = new VirtualClock();
   const stores: SqliteStore[] = [];
   t.after(async () => {
     for (const store of stores) await store.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  return () => { const store = new SqliteStore(path); stores.push(store); return store; };
+  return Object.assign(() => { const store = new SqliteStore(path, clock); stores.push(store); return store; }, { clock });
 }
 async function pending(store: SqliteStore, execution = initial.executionId) {
   await store.create({ ...initial, executionId: execution });
@@ -113,9 +115,9 @@ test("cancellation withdraws queued work atomically but retains terminal notices
   assert.ok(cancelled);
   const effects = await observer.effects(initial.executionId);
   assert.equal(effects.find(e => e.operation === "request.offer")!.status, "withdrawn");
-  assert.equal(await observer.claimEffect(committed.effects[0].id, "late-sender", 0, 100), null);
+  assert.equal(await observer.claimEffect(committed.effects[0].id, "late-sender", 100), null);
   assert.deepEqual((await observer.request(committed.requests[0].id))!.outcome, { tag: "Cancelled" });
-  assert.ok((await observer.scanEffects(0)).every(e => e.kind === "notification"));
+  assert.ok((await observer.scanEffects()).every(e => e.kind === "notification"));
   assert.equal(await observer.settleRequest(committed.requests[0].id, 0, "alice", { tag: "Done", value: "too late" }), false);
   await assert.rejects(store.commit(cancelled!.checkpoint, { status: "completed", snapshot: null,
     effects: [{ operation: "run", arguments: "new work after termination" }] }), /cannot create new work/);
@@ -124,49 +126,53 @@ test("cancellation withdraws queued work atomically but retains terminal notices
 test("dead dispatchers are recovered for reconciliation, never an automatic resend", async (t) => {
   const open = fixture(t), a = open(), b = open();
   const { effects: [effect] } = await pending(a);
-  const first = (await a.claimEffect(effect.id, "first", 100, 20))!;
+  open.clock.advanceTo(100);
+  const first = (await a.claimEffect(effect.id, "first", 20))!;
   assert.equal(first.mode, "send");
-  assert.equal(await b.claimEffect(effect.id, "second", 119, 20), null);
+  open.clock.advanceTo(119);
+  assert.equal(await b.claimEffect(effect.id, "second", 20), null);
   await a.close();
   const recovered = open();
-  assert.equal((await recovered.scanEffects(119)).length, 0);
-  assert.equal((await recovered.scanEffects(120))[0].id, effect.id);
-  const next = (await recovered.claimEffect(effect.id, "second", 120, 20))!;
+  assert.equal((await recovered.scanEffects()).length, 0);
+  open.clock.advanceTo(120);
+  assert.equal((await recovered.scanEffects())[0].id, effect.id);
+  const next = (await recovered.claimEffect(effect.id, "second", 20))!;
   assert.equal(next.mode, "reconcile");
   assert.equal(next.effect.id, first.effect.id);
-  assert.equal(await b.recordDelivery(first, "stale receipt", 121), false);
-  assert.equal(await b.markUncertain(first, "stale writer", 121), false);
-  await assert.rejects(recovered.prepareRetry(next, "expired" as never, 121), /host evidence/);
-  const retry = (await recovered.prepareRetry(next, "host-deduplicates-original-id", 121))!;
+  open.clock.advanceTo(121);
+  assert.equal(await b.recordDelivery(first, "stale receipt"), false);
+  assert.equal(await b.markUncertain(first, "stale writer"), false);
+  await assert.rejects(recovered.prepareRetry(next, "expired" as never), /host evidence/);
+  const retry = (await recovered.prepareRetry(next, "host-deduplicates-original-id"))!;
   assert.equal(retry.mode, "send");
   assert.equal(retry.effect.id, effect.id);
-  assert.equal(await recovered.recordDelivery(retry, { delivered: true }, 122), true);
-  assert.equal(await recovered.recordDelivery(retry, "duplicate", 123), false);
+  assert.equal(await recovered.recordDelivery(retry, { delivered: true }), true);
+  assert.equal(await recovered.recordDelivery(retry, "duplicate"), false);
 });
 
 test("unknown delivery remains recoverable without manufacturing success", async (t) => {
   const store = fixture(t)();
   const { effects: [effect] } = await pending(store);
-  const claim = (await store.claimEffect(effect.id, "a", 0, 10))!;
-  assert.equal(await store.markUncertain(claim, "no transport acknowledgement", 1), true);
-  assert.deepEqual(await store.scanEffects(2), []);
-  assert.equal(await store.claimEffect(effect.id, "b", 2, 10), null);
+  const claim = (await store.claimEffect(effect.id, "a", 10))!;
+  assert.equal(await store.markUncertain(claim, "no transport acknowledgement"), true);
+  assert.deepEqual(await store.scanEffects(), []);
+  assert.equal(await store.claimEffect(effect.id, "b", 10), null);
   assert.equal(await store.provideEvidence(effect.id, "host lookup now available"), true);
-  const reconcile = (await store.claimEffect(effect.id, "b", 2, 10))!;
+  const reconcile = (await store.claimEffect(effect.id, "b", 10))!;
   assert.equal(reconcile.mode, "reconcile");
   assert.equal((await store.effects(initial.executionId))[0].receipt, null);
   assert.equal((await store.scanReady()).length, 0);
   await store.commit((await store.load(initial.executionId))!, { status: "revoked", snapshot: null });
-  assert.equal(await store.prepareRetry(reconcile, "host-deduplicates-original-id", 3), null);
-  assert.equal(await store.recordDelivery(reconcile, "original delivery confirmed after revocation", 3), true);
+  assert.equal(await store.prepareRetry(reconcile, "host-deduplicates-original-id"), null);
+  assert.equal(await store.recordDelivery(reconcile, "original delivery confirmed after revocation"), true);
   assert.equal((await store.scanReady()).length, 0);
 });
 
 test("delivery acknowledgement and weeks-later request outcome are independent", async (t) => {
   const open = fixture(t), store = open();
   const { requests: [request], effects: [offer] } = await requested(store);
-  const claim = (await store.claimEffect(offer.id, "sender", 0, 100))!;
-  assert.equal(await store.recordDelivery(claim, { accepted: true }, 1), true);
+  const claim = (await store.claimEffect(offer.id, "sender", 100))!;
+  assert.equal(await store.recordDelivery(claim, { accepted: true }), true);
   assert.equal((await store.request(request.id))!.outcome, null);
   assert.deepEqual(await store.scanReady(), []);
   await store.close();
@@ -196,31 +202,32 @@ test("handover keeps the request and fences replies from its previous holder", a
 });
 
 test("handover fences resending an old offer even when its host supports deduplication", async (t) => {
-  const store = fixture(t)();
+  const open = fixture(t), store = open();
   const { requests: [request], effects: [offer] } = await requested(store);
-  const sending = (await store.claimEffect(offer.id, "old-worker", 0, 10))!;
+  const sending = (await store.claimEffect(offer.id, "old-worker", 10))!;
   await store.handOver(request.id, 0, "alice", "bob");
-  assert.equal(await store.claimEffect(offer.id, "new-worker", 10, 10), null);
+  open.clock.advanceTo(10);
+  assert.equal(await store.claimEffect(offer.id, "new-worker", 10), null);
   assert.equal((await store.effects(initial.executionId)).find(e => e.id === offer.id)!.status, "superseded");
-  assert.ok((await store.scanEffects(10)).every(e => e.id !== offer.id));
-  assert.equal(await store.prepareRetry(sending, "host-deduplicates-original-id", 11), null);
-  assert.equal(await store.recordDelivery(sending, "late old acknowledgement", 11), false);
+  assert.ok((await store.scanEffects()).every(e => e.id !== offer.id));
+  assert.equal(await store.prepareRetry(sending, "host-deduplicates-original-id"), null);
+  assert.equal(await store.recordDelivery(sending, "late old acknowledgement"), false);
   assert.equal((await store.request(request.id))!.holder, "bob");
 });
 
 test("recovery discovers ready programs and effects with keyset pagination", async (t) => {
   const store = fixture(t)();
   for (const name of ["a", "b", "c"]) await pending(store, name);
-  const first = await store.scanEffects(0, { limit: 2 });
-  const second = await store.scanEffects(0, { limit: 2, after: first[1].id });
+  const first = await store.scanEffects({ limit: 2 });
+  const second = await store.scanEffects({ limit: 2, after: first[1].id });
   assert.deepEqual([...first, ...second].map(e => e.executionId), ["a", "b", "c"]);
   for (const effect of [...first, ...second]) {
-    const claim = (await store.claimEffect(effect.id, "sender", 0, 10))!;
-    await store.recordDelivery(claim, "delivered", 1);
+    const claim = (await store.claimEffect(effect.id, "sender", 10))!;
+    await store.recordDelivery(claim, "delivered");
   }
-  const ready = await store.scanReady(0, { limit: 2 });
+  const ready = await store.scanReady({ limit: 2 });
   assert.deepEqual(ready.map(e => e.executionId), ["a", "b"]);
-  assert.deepEqual((await store.scanReady(0, { after: ready[1].executionId })).map(e => e.executionId), ["c"]);
+  assert.deepEqual((await store.scanReady({ after: ready[1].executionId })).map(e => e.executionId), ["c"]);
 });
 
 test("nonportable data and invalid wait dependencies cannot partially commit", async (t) => {

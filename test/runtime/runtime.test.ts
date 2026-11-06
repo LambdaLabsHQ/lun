@@ -1,3 +1,4 @@
+import { VirtualClock } from "../../src/runtime/clock.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -17,7 +18,7 @@ const hour = () => n("DurationLiteral", { amount: "1", unit: "h" });
 const labelled = (label: string, value: Expression) => n("LabelledArg", { label, value });
 const invoke = (name: string, args: Parameters<typeof n<"Call">>[1]["args"]) => n("Call", { callee: id(name), args });
 async function setup(p: Program) {
-  const store = new SqliteStore(":memory:"), host = new SimulatedHost(store), runtime = new Runtime(compile(p), store, host);
+  const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock), runtime = new Runtime(compile(p), store, host);
   await runtime.create("p"); await host.pump(runtime);
   return { store, host, runtime };
 }
@@ -83,7 +84,7 @@ test("a release verification chain consumes preexisting facts and a later releas
     let_("release", n("Try", { operand: call("wait", invoke("released", [constructor("Beta"), labelled("containing", id("pr"))])) })),
     n("Try", { operand: call("wait", invoke("machineUpdated", [labelled("machine", str("builder")), labelled("atLeast", n("FieldAccess", { record: id("release"), field: "version" }))])) }),
     call("run", person("codex"), str("verify live")));
-  const store = new SqliteStore(":memory:"), host = new SimulatedHost(store), runtime = new Runtime(compile(p), store, host);
+  const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock), runtime = new Runtime(compile(p), store, host);
   const source = (name: string, args: Value[], labels: Record<string, Value> = {}): Value => ({ type: "source", kind: "fact", name, args, labels });
   try {
     await host.emit("merged-first", source("merged", [text("acme/api#1")]), text("pr:1"));
@@ -122,10 +123,11 @@ test("keep-going recursion wakes on a PR event, then stops when the judge says d
 test("restart loads the pinned AST artifact rather than recompiling source", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "norn-runtime-")), path = join(directory, "runtime.sqlite");
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  let store = new SqliteStore(path), host = new SimulatedHost(store);
+  const clock = new VirtualClock();
+  let store = new SqliteStore(path, clock), host = new SimulatedHost(store, clock);
   let runtime = new Runtime(compile(program(call("ask", person("alice"), str("hello")))), store, host);
   await runtime.create("p"); await host.pump(runtime); const original = await openRequest(store); await store.close();
-  store = new SqliteStore(path); host = new SimulatedHost(store, 20);
+  clock.advanceTo(20); store = new SqliteStore(path, clock); host = new SimulatedHost(store, clock);
   try {
     runtime = await Runtime.restore("p", store, host);
     await assert.rejects(store.saveCode(runtime.code.id, "overwritten"), /cannot be overwritten/);
@@ -137,18 +139,72 @@ test("restart loads the pinned AST artifact rather than recompiling source", asy
 });
 
 test("current host policy blocks new work and a message whose permission was revoked before delivery", async () => {
-  const store = new SqliteStore(":memory:"), host = new SimulatedHost(store);
+  const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
   const runtime = new Runtime(compile(program(call("say", person("alice"), str("notice")))), store, host);
   try {
-    await runtime.create("p"); await runtime.runReady(host.now); host.permitted = false; await host.dispatch();
+    await runtime.create("p"); await runtime.runReady(); host.permitted = false; await host.dispatch();
     const effects = await store.effects("p");
     assert.equal(effects.find(e => e.operation === "say")!.status, "blocked");
   } finally { await store.close(); }
-  const s = new SqliteStore(":memory:"), h = new SimulatedHost(s); h.permitted = false;
+  const c = new VirtualClock(), s = new SqliteStore(":memory:", c), h = new SimulatedHost(s, c); h.permitted = false;
   try {
     const r = new Runtime(compile(program(call("run", person("codex"), str("never")))), s, h);
     await r.create("p"); await h.pump(r);
     assert.equal((await s.load("p"))!.status, "revoked");
     assert.ok((await s.effects("p")).every(e => e.operation !== "request.offer"));
   } finally { await s.close(); }
+});
+
+
+test("temporary policy and storage failures preserve checkpoints and outstanding requests", async () => {
+  const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock);
+  let available = false;
+  const policy = { async authorize() { if (!available) throw new Error("permission service 503"); return true; } };
+  const runtime = new Runtime(compile(program(call("ask", person("alice"), str("question")))), store, policy);
+  try {
+    await runtime.create("p"); const initial = await store.load("p");
+    await assert.rejects(runtime.step("p"), /503/);
+    assert.deepEqual(await store.load("p"), initial);
+    assert.deepEqual(await store.effects("p"), []);
+    available = true; await runtime.step("p");
+    assert.equal((await store.load("p"))!.status, "suspended");
+  } finally { await store.close(); }
+
+  const c = new VirtualClock(), s = new SqliteStore(":memory:", c), h = new SimulatedHost(s, c);
+  const r = new Runtime(compile(program(let_("q", call("request", person("alice"), str("question"))), call("status", id("q")))), s, h);
+  try {
+    await r.create("p"); await r.step("p");
+    const before = await s.load("p"), request = await openRequest(s);
+    const read = s.request.bind(s);
+    s.request = async () => { throw new Error("storage temporarily unavailable"); };
+    await assert.rejects(r.step("p"), /temporarily unavailable/);
+    s.request = read;
+    assert.deepEqual(await s.load("p"), before);
+    assert.equal((await s.request(request.id))!.outcome, null);
+    await h.pump(r); assert.equal((await s.load("p"))!.status, "completed");
+  } finally { await s.close(); }
+});
+
+test("ready programs are selected by code identity without starvation by other code", async () => {
+  const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
+  const ours = new Runtime(compile(program(str("ours"))), store, host), other = new Runtime(compile(program(str("other"))), store, host);
+  try {
+    await other.create("a"); await other.create("b"); await ours.create("z");
+    await ours.runReady(2);
+    assert.equal((await store.load("z"))!.status, "completed");
+    assert.equal((await store.load("a"))!.status, "ready");
+  } finally { await store.close(); }
+});
+
+test("cancelling an execution withdraws a user's queued say but retains the owner notice", async () => {
+  const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
+  const runtime = new Runtime(compile(program(call("say", person("alice"), str("do not send")), call("ask", person("alice"), str("pending")))), store, host);
+  try {
+    await runtime.create("p"); await runtime.runReady();
+    await store.commit((await store.load("p"))!, { status: "cancelled", snapshot: null });
+    await host.dispatch();
+    const effects = await store.effects("p");
+    assert.equal(effects.find(e => e.operation === "say")!.status, "withdrawn");
+    assert.equal(effects.find(e => e.operation === "request.closed")!.status, "delivered");
+  } finally { await store.close(); }
 });

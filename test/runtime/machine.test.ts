@@ -4,7 +4,7 @@ import type { AstNode, Expression, FieldsOf, NodeKind, Pattern, Program, Stateme
 import { compile } from "../../src/runtime/code.ts";
 import { advance, resume, start, type Machine } from "../../src/runtime/machine.ts";
 import { encodeJson, type Json } from "../../src/runtime/persistence.ts";
-import { text, unit, variant, type Value } from "../../src/runtime/value.ts";
+import { show, text, unit, variant, type Value } from "../../src/runtime/value.ts";
 
 const span: Span = { start: { line: 1, column: 1, offset: 0 }, end: { line: 1, column: 1, offset: 0 } };
 function n<K extends NodeKind>(kind: K, fields: Pick<Extract<AstNode, {kind: K}>, FieldsOf<K>>): Extract<AstNode, {kind: K}> {
@@ -134,4 +134,11 @@ test("pinned code cannot be mutated through the original AST or exposed node tab
 test("lexical names that resemble JavaScript prototype properties stay ordinary bindings", () => {
   const p = program(let_("__proto__", str("value")), id("__proto__"));
   assert.deepEqual(done(p), text("value"));
+});
+
+
+test("time and duration rendering produces readable coordination text", () => {
+  assert.equal(show({ type: "time", value: String(Date.parse("2026-11-07T12:00Z")) }), "2026-11-07T12:00:00.000Z");
+  assert.equal(show({ type: "duration", value: "3600000" }), "1h");
+  assert.equal(show({ type: "duration", value: "86400000" }), "1d");
 });

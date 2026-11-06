@@ -31,6 +31,13 @@ export interface StoredRequest extends RequestDescription {
   outcome: RequestOutcome | null;
   settledAt: number | null;
 }
+export interface RequestEvidence {
+  epoch: number;
+  holder: string;
+  outcome: RequestOutcome;
+  receivedAt: number;
+  accepted: boolean;
+}
 export type WaitTarget =
   | { kind: "request"; id: string }
   | { kind: "event"; key: string; mode: "fact" | "stream" }
@@ -57,7 +64,6 @@ export interface CheckpointChange {
   requests?: RequestDescription[];
   waits?: WaitDescription[];
   requestActions?: RequestAction[];
-  now?: number;
 }
 export interface StoredEffect extends EffectDescription {
   id: string;
@@ -87,6 +93,7 @@ export interface Commit { checkpoint: Checkpoint; effects: StoredEffect[]; reque
  * All adapters are asynchronous, including the synchronous SQLite reference backend.
  */
 export interface DurableStore {
+  currentTime(): Promise<number>;
   saveCode(codeId: string, ast: string): Promise<void>;
   loadCode(codeId: string): Promise<string | null>;
   create(initial: InitialCheckpoint): Promise<boolean>;
@@ -94,17 +101,18 @@ export interface DurableStore {
   commit(expected: Checkpoint, change: CheckpointChange): Promise<Commit | null>;
   effects(executionId: string): Promise<StoredEffect[]>;
   request(id: string): Promise<StoredRequest | null>;
-  settleRequest(id: string, epoch: number, holder: string, outcome: RequestOutcome, at?: number): Promise<boolean>;
+  requestEvidence(id: string): Promise<RequestEvidence[]>;
+  settleRequest(id: string, epoch: number, holder: string, outcome: RequestOutcome): Promise<boolean>;
   wait(id: string): Promise<StoredWait | null>;
-  publishEvent(id: string, key: string, mode: "fact" | "stream", value: Json, at: number, originExecutionId?: string): Promise<boolean>;
+  publishEvent(id: string, key: string, mode: "fact" | "stream", value: Json, originExecutionId?: string): Promise<boolean>;
   handOver(id: string, epoch: number, holder: string, nextHolder: string): Promise<StoredRequest | null>;
-  claimEffect(id: string, owner: string, now: number, leaseMs: number): Promise<DispatchClaim | null>;
+  claimEffect(id: string, owner: string, leaseMs: number): Promise<DispatchClaim | null>;
   provideEvidence(id: string, detail: string): Promise<boolean>;
-  prepareRetry(claim: DispatchClaim, evidence: RetryEvidence, now: number): Promise<DispatchClaim | null>;
-  markUncertain(claim: DispatchClaim, detail: string, now: number): Promise<boolean>;
-  recordDelivery(claim: DispatchClaim, receipt: Json, now: number): Promise<boolean>;
-  scanEffects(now: number, scan?: Scan): Promise<StoredEffect[]>;
-  scanReady(now?: number, scan?: Scan): Promise<Checkpoint[]>;
+  prepareRetry(claim: DispatchClaim, evidence: RetryEvidence): Promise<DispatchClaim | null>;
+  markUncertain(claim: DispatchClaim, detail: string): Promise<boolean>;
+  recordDelivery(claim: DispatchClaim, receipt: Json): Promise<boolean>;
+  scanEffects(scan?: Scan): Promise<StoredEffect[]>;
+  scanReady(scan?: Scan): Promise<Checkpoint[]>;
   close(): Promise<void>;
 }
 

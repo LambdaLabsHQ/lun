@@ -44,7 +44,15 @@ export function show(value: Value): string {
   switch (value.type) {
     case "unit": return "()";
     case "bool": return String(value.value);
-    case "string": case "int": case "float": case "time": case "duration": return value.value;
+    case "string": case "int": case "float": return value.value;
+    case "time": return new Date(Number(value.value)).toISOString();
+    case "duration": {
+      const ms = BigInt(value.value);
+      for (const [unit, amount] of [["w", 604_800_000n], ["d", 86_400_000n], ["h", 3_600_000n], ["m", 60_000n]] as const) {
+        if (ms !== 0n && ms % amount === 0n) return `${ms / amount}${unit}`;
+      }
+      return `${ms}ms`;
+    }
     case "participant": return `@${value.name}${value.instance === null ? "" : `:${value.instance}`}`;
     case "ref": return `${value.kind}\"${value.value}\"`;
     case "variant": return value.name + (value.args.length ? `(${value.args.map(show).join(", ")})` : "");

@@ -16,7 +16,7 @@ such as negative zero need an explicit evaluator representation.
 
 `commit` atomically saves a checkpoint, effect intents and newly issued requests.
 Two workers at the same revision cannot both commit. Terminal executions cannot
-resume. A terminal transition withdraws queued work and closes open requests;
+resume. Successful completion still drains messages already committed by the program. Cancellation, revocation or failure withdraws queued work and closes open requests;
 terminal notices remain deliverable. Already dispatched work cannot be undone by
 changing a database row.
 
@@ -59,9 +59,18 @@ Observing an existing fact and recording a stream cursor happen in the same
 transaction as registration. Self-caused events are ignored. Deadlines are
 exclusive: an answer at the deadline loses to timeout. An `ask`-style timeout
 withdraws its request; an explicit handle wait leaves it open. Late inputs cannot
-overwrite a stored wait outcome.
+overwrite a stored wait outcome. Validated late/obsolete request answers are kept
+as evidence with an accepted flag, without reopening the request.
 
-`scanEffects` discovers queued deliveries and expired claims. `scanReady(now)`
+Storage owns the trusted clock, injected into `SqliteStore` at construction.
+Production defaults to the local system clock; tests share a `VirtualClock` with
+the simulated host. Observation time is monotonic in the database across
+connections/restarts. Event payload timestamps do not advance the clock or
+arbitrate deadlines. Public calls do not accept a caller's `now` or default to 0.
+A distributed production adapter must use its authority's database/service clock,
+rather than trusting the clocks of individual dispatch workers.
+
+`scanEffects` discovers queued deliveries and expired claims. `scanReady()`
 discovers runnable checkpoints, including suspended executions whose referenced
 delivery or request result was stored before a crash. Both support keyset
 pagination. The snapshot is resumed only by another revision-checked commit;
@@ -71,7 +80,7 @@ recording an input alone never runs user code.
 
 SQLite uses full synchronous commits and serializes initialization and writes.
 Connection startup leaves journal mode unchanged to avoid a concurrent WAL-mode
-initialization race. Experimental schema version 4 refuses older/newer versions;
+initialization race. Experimental schema version 6 refuses older/newer versions;
 it does not silently reinterpret snapshots or rewrite an unsupported store.
 
 New database files are owner-only. Supply a private parent directory; existing

@@ -1,14 +1,15 @@
+import { systemClock, type Clock } from "./clock.ts";
 import { DatabaseSync } from "node:sqlite";
 import { closeSync, openSync } from "node:fs";
 import {
   effectId, requestId, waitId, encodeJson,
   type Checkpoint, type CheckpointChange, type Commit, type DispatchClaim, type DurableStore,
   type ExecutionStatus, type InitialCheckpoint, type Json, type RequestOutcome,
-  type RetryEvidence, type Scan, type StoredEffect, type StoredRequest, type StoredWait, type WaitFor, type WaitOutcome, type WaitDescription,
+  type RequestEvidence, type RetryEvidence, type Scan, type StoredEffect, type StoredRequest, type StoredWait, type WaitFor, type WaitOutcome, type WaitDescription,
 } from "./persistence.ts";
 
 type Row = Record<string, unknown>;
-const schemaVersion = 4;
+const schemaVersion = 6;
 const terminal = new Set<ExecutionStatus>(["completed", "failed", "cancelled", "revoked"]);
 const activeSql = "e.status IN ('ready', 'suspended')";
 
@@ -56,8 +57,10 @@ function clock(now: number, leaseMs = 1): void {
 /** Local reference adapter. No async callbacks run inside SQLite transactions. */
 export class SqliteStore implements DurableStore {
   private readonly db: DatabaseSync;
+  private readonly clock: Clock;
   private closed = false;
-  constructor(path: string) {
+  constructor(path: string, clock: Clock = systemClock) {
+    this.clock = clock;
     if (path !== ":memory:") {
       try { const fd = openSync(path, "wx", 0o600); closeSync(fd); }
       catch (error) {
@@ -73,6 +76,8 @@ export class SqliteStore implements DurableStore {
           const tables = this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
           if (tables.length) throw new Error("Refusing to initialize a nonempty database without a Norn schema version");
           this.db.exec(`
+            CREATE TABLE clock_state (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), last_seen INTEGER NOT NULL);
+            INSERT INTO clock_state VALUES (1, 0);
             CREATE TABLE codes (id TEXT PRIMARY KEY, ast TEXT NOT NULL);
             CREATE TABLE executions (
               id TEXT PRIMARY KEY, revision INTEGER NOT NULL, code_id TEXT NOT NULL,
@@ -90,6 +95,12 @@ export class SqliteStore implements DurableStore {
               id TEXT PRIMARY KEY, execution_id TEXT NOT NULL REFERENCES executions(id),
               epoch INTEGER NOT NULL, holder TEXT NOT NULL, arguments TEXT NOT NULL, outcome TEXT, settled_at INTEGER
             );
+            CREATE TABLE request_evidence (
+              seq INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL REFERENCES requests(id),
+              epoch INTEGER NOT NULL, holder TEXT NOT NULL, outcome TEXT NOT NULL,
+              received_at INTEGER NOT NULL, accepted INTEGER NOT NULL
+            );
+            CREATE INDEX request_evidence_request ON request_evidence(request_id, seq);
             CREATE TABLE waits (
               id TEXT PRIMARY KEY, execution_id TEXT NOT NULL REFERENCES executions(id),
               description TEXT NOT NULL, cursor INTEGER NOT NULL, outcome TEXT
@@ -103,7 +114,7 @@ export class SqliteStore implements DurableStore {
             CREATE INDEX effects_execution ON effects(execution_id, revision, ordinal);
             CREATE INDEX effects_recovery ON effects(status, lease_until, id);
             CREATE INDEX requests_execution ON requests(execution_id);
-            PRAGMA user_version = 4;
+            PRAGMA user_version = 6;
           `);
         } else if (version !== schemaVersion) {
           throw new Error(`Unsupported Norn store version ${version}; migration is required`);
@@ -112,6 +123,12 @@ export class SqliteStore implements DurableStore {
       this.db.exec("PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL;");
     } catch (error) { this.db.close(); throw error; }
   }
+  private time(): number {
+    const observed = this.clock.now(); clock(observed);
+    const row = this.db.prepare("UPDATE clock_state SET last_seen = MAX(last_seen, ?) WHERE singleton = 1 RETURNING last_seen").get(observed) as Row;
+    return row.last_seen as number;
+  }
+  async currentTime(): Promise<number> { return this.time(); }
   private transaction<T>(body: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try { const result = body(); this.db.exec("COMMIT"); return result; }
@@ -149,7 +166,7 @@ export class SqliteStore implements DurableStore {
       WHERE operation = 'request.offer' AND json_extract(arguments, '$.requestId') = ?
       AND status IN ('dispatching', 'uncertain', 'blocked')`).run(id);
   }
-  private finishRequest(request: StoredRequest, outcome: RequestOutcome, at = 0): void {
+  private finishRequest(request: StoredRequest, outcome: RequestOutcome, at: number): void {
     this.db.prepare("UPDATE requests SET outcome = ?, settled_at = ? WHERE id = ?").run(encodeJson(outcome as unknown as Json), at, request.id);
     this.withdrawRequestOffer(request.id);
     this.notice(request, "closed", "request.closed", {
@@ -159,7 +176,7 @@ export class SqliteStore implements DurableStore {
   }
   private canSend(effect: StoredEffect): boolean {
     if (effect.kind === "notification") return true;
-    if (terminal.has(this.read(effect.executionId)!.status)) return false;
+    if (["failed", "cancelled", "revoked"].includes(this.read(effect.executionId)!.status)) return false;
     if (effect.operation !== "request.offer") return true;
     const args = effect.arguments as { requestId: string; epoch: number; holder: string };
     const request = this.readRequest(args.requestId);
@@ -189,7 +206,7 @@ export class SqliteStore implements DurableStore {
     if (!Number.isSafeInteger(expected.revision) || expected.revision < 0 || !Number.isSafeInteger(expected.revision + 1)) {
       throw new TypeError("Checkpoint revision must be a nonnegative safe integer");
     }
-    const now = change.now ?? 0; clock(now);
+    const now = this.time();
     const snapshot = encodeJson(change.snapshot);
     const effects = (change.effects ?? []).map(e => ({ ...e, arguments: JSON.parse(encodeJson(e.arguments)) as Json }));
     const requests = (change.requests ?? []).map(r => ({ ...r, arguments: JSON.parse(encodeJson(r.arguments)) as Json }));
@@ -248,7 +265,7 @@ export class SqliteStore implements DurableStore {
         }
       }
       if (terminal.has(change.status)) {
-        this.db.prepare(`UPDATE effects SET status = 'withdrawn', detail = 'execution terminated'
+        if (change.status !== "completed") this.db.prepare(`UPDATE effects SET status = 'withdrawn', detail = 'execution terminated'
           WHERE execution_id = ? AND status = 'pending' AND kind = 'work'`).run(current.executionId);
         const open = this.db.prepare("SELECT * FROM requests WHERE execution_id = ? AND outcome IS NULL")
           .all(current.executionId).map(storedRequest);
@@ -263,8 +280,14 @@ export class SqliteStore implements DurableStore {
       .all(executionId).map(storedEffect);
   }
   async request(id: string): Promise<StoredRequest | null> { return this.readRequest(id); }
-  async settleRequest(id: string, epoch: number, holder: string, outcome: RequestOutcome, at = 0): Promise<boolean> {
-    clock(at);
+  async requestEvidence(id: string): Promise<RequestEvidence[]> {
+    return this.db.prepare("SELECT * FROM request_evidence WHERE request_id = ? ORDER BY seq").all(id).map(row => ({
+      epoch: row.epoch as number, holder: row.holder as string, outcome: JSON.parse(row.outcome as string) as RequestOutcome,
+      receivedAt: row.received_at as number, accepted: row.accepted === 1,
+    }));
+  }
+  async settleRequest(id: string, epoch: number, holder: string, outcome: RequestOutcome): Promise<boolean> {
+    const at = this.time();
     encodeJson(outcome as unknown as Json);
     if (!["Done", "Declined", "Failed", "Cancelled", "Revoked"].includes(outcome.tag) ||
       (outcome.tag === "Done" && !Object.hasOwn(outcome, "value")) ||
@@ -274,8 +297,12 @@ export class SqliteStore implements DurableStore {
     return this.transaction(() => {
       this.resolveWaits(at);
       const request = this.readRequest(id);
-      if (!request || request.epoch !== epoch || request.holder !== holder || request.outcome !== null ||
-          terminal.has(this.read(request.executionId)!.status)) return false;
+      if (!request) return false;
+      const accepted = request.epoch === epoch && request.holder === holder && request.outcome === null &&
+        !terminal.has(this.read(request.executionId)!.status);
+      this.db.prepare("INSERT INTO request_evidence(request_id, epoch, holder, outcome, received_at, accepted) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(id, epoch, holder, encodeJson(outcome as unknown as Json), at, accepted ? 1 : 0);
+      if (!accepted) return false;
       this.finishRequest(request, outcome, at);
       this.resolveWaits(at);
       return true;
@@ -333,8 +360,8 @@ export class SqliteStore implements DurableStore {
       }
     }
   }
-  async publishEvent(id: string, key: string, mode: "fact" | "stream", value: Json, at: number, originExecutionId?: string): Promise<boolean> {
-    clock(at); const encoded = encodeJson(value);
+  async publishEvent(id: string, key: string, mode: "fact" | "stream", value: Json, originExecutionId?: string): Promise<boolean> {
+    const at = this.time(); const encoded = encodeJson(value);
     return this.transaction(() => {
       const inserted = this.db.prepare("INSERT INTO events(id, key, mode, value, at, origin) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING")
         .run(id, key, mode, encoded, at, originExecutionId ?? null).changes === 1;
@@ -351,8 +378,8 @@ export class SqliteStore implements DurableStore {
       AND lease_until > ? AND status IN ('dispatching', 'uncertain')`).get(claim.effect.id, claim.owner, claim.epoch, now);
     return row ?? null;
   }
-  async claimEffect(id: string, owner: string, now: number, leaseMs: number): Promise<DispatchClaim | null> {
-    clock(now, leaseMs);
+  async claimEffect(id: string, owner: string, leaseMs: number): Promise<DispatchClaim | null> {
+    const now = this.time(); clock(now, leaseMs);
     if (!owner) throw new TypeError("A dispatch claim needs an owner");
     return this.transaction(() => {
       const row = this.db.prepare("SELECT * FROM effects WHERE id = ?").get(id);
@@ -366,7 +393,8 @@ export class SqliteStore implements DurableStore {
       return { effect: { ...effect, status: mode === "send" ? "dispatching" : "uncertain" }, owner, epoch, until: now + leaseMs, mode };
     });
   }
-  async prepareRetry(claim: DispatchClaim, evidence: RetryEvidence, now: number): Promise<DispatchClaim | null> {
+  async prepareRetry(claim: DispatchClaim, evidence: RetryEvidence): Promise<DispatchClaim | null> {
+    const now = this.time();
     if (!["host-deduplicates-original-id", "previous-sender-fenced-and-host-confirmed-absent"].includes(evidence)) throw new TypeError("Retry requires host evidence");
     return this.transaction(() => {
       const row = this.validClaim(claim, now);
@@ -375,7 +403,8 @@ export class SqliteStore implements DurableStore {
       return { ...claim, mode: "send", effect: { ...storedEffect(row), status: "dispatching", detail: evidence } };
     });
   }
-  async markUncertain(claim: DispatchClaim, detail: string, now: number): Promise<boolean> {
+  async markUncertain(claim: DispatchClaim, detail: string): Promise<boolean> {
+    const now = this.time();
     return this.transaction(() => {
       if (!this.validClaim(claim, now)) return false;
       this.db.prepare("UPDATE effects SET status = 'blocked', detail = ?, owner = NULL, lease_until = 0 WHERE id = ?")
@@ -383,7 +412,8 @@ export class SqliteStore implements DurableStore {
       return true;
     });
   }
-  async recordDelivery(claim: DispatchClaim, receipt: Json, now: number): Promise<boolean> {
+  async recordDelivery(claim: DispatchClaim, receipt: Json): Promise<boolean> {
+    const now = this.time();
     const encoded = encodeJson(receipt);
     return this.transaction(() => {
       if (!this.validClaim(claim, now)) return false;
@@ -392,15 +422,15 @@ export class SqliteStore implements DurableStore {
       return true;
     });
   }
-  async scanEffects(now: number, scan: Scan = {}): Promise<StoredEffect[]> {
-    clock(now);
+  async scanEffects(scan: Scan = {}): Promise<StoredEffect[]> {
+    const now = this.time();
     return this.db.prepare(`SELECT f.* FROM effects f JOIN executions e ON e.id = f.execution_id
-      WHERE f.id > ? AND ((f.status = 'pending' AND (f.kind = 'notification' OR ${activeSql}))
+      WHERE f.id > ? AND ((f.status = 'pending' AND (f.kind = 'notification' OR e.status IN ('ready', 'suspended', 'completed')))
       OR (f.status IN ('dispatching', 'uncertain') AND f.lease_until <= ?)) ORDER BY f.id LIMIT ?`)
       .all(scan.after ?? "", now, pageSize(scan)).map(storedEffect);
   }
-  async scanReady(now = 0, scan: Scan = {}): Promise<Checkpoint[]> {
-    clock(now);
+  async scanReady(scan: Scan = {}): Promise<Checkpoint[]> {
+    const now = this.time();
     return this.transaction(() => {
     this.resolveWaits(now);
     return this.db.prepare(`SELECT e.* FROM executions e WHERE e.id > ? AND (? IS NULL OR e.code_id = ?) AND

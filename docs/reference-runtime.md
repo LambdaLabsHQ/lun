@@ -23,18 +23,18 @@ value is a suspension description, not permission to perform an action.
 `Runtime` drives that machine through `DurableStore`. Participant requests,
 request assignment changes, waits and outgoing messages are committed with the
 continuation under the checkpoint revision check. A worker that loses the check
-cannot dispatch its abandoned intents. Request answers and wait outcomes are
+cannot dispatch its abandoned intents. Temporary host/policy/storage failures
+propagate without changing a checkpoint; only program errors commit failure. Request answers and wait outcomes are
 independent, including after timeouts and handover. The host's `Policy` is
 required and is consulted for effects; a real transport must check current
 permissions again at delivery.
 
-`SimulatedHost` never starts an agent or contacts an external service. Its clock
-is an explicit host input, advanced by `advanceTo`, and scripted replies go
+`SimulatedHost` never starts an agent or contacts an external service. It shares a `VirtualClock` injected into the SQLite store, advanced by `advanceTo`, and scripted replies go
 through the same request ID/epoch checks. Use `reply` and `emit` to supply inputs,
 then `pump` to run ready programs and expose simulated messages. On restart,
 supply the same pinned code, store and current host clock; the deadlines and
-subscription positions are already persisted. The caller owns the clock and
-must not roll it back.
+subscription positions are already persisted. The store owns observation time and persists its monotonic floor. External
+event timestamps remain data. Hosts cannot pass a new clock value with a reply.
 
 This is an incremental prototype, not the entire draft specification. Request
 and event waits, merged alternatives, one-shot timers, message effects and
