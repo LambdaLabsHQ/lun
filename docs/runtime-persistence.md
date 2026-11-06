@@ -71,7 +71,11 @@ the simulated host. Observation time is monotonic in the database across
 connections/restarts. Event payload timestamps do not advance the clock or
 arbitrate deadlines. Public calls do not accept a caller's `now` or default to
 0. A distributed production adapter must use its authority's database/service
-clock, rather than trusting the clocks of individual dispatch workers.
+clock, rather than trusting the clocks of individual dispatch workers. A local system
+clock that incorrectly jumps forward also advances the persisted floor; the
+reference adapter cannot correct that by rewinding deadlines. The production
+xMatrix adapter should use PostgreSQL authority time rather than this local
+system-clock default.
 
 `scanEffects` discovers queued deliveries and expired claims. `scanReady()`
 discovers runnable checkpoints, including suspended executions whose referenced
