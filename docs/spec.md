@@ -267,7 +267,9 @@ language.
   (any two streams; it only says that something happened), `filter` and
   `map`. `never()` is a stream with no occurrences. `wait(stream)` returns the
   next occurrence after the program starts listening. `forEach` handles every
-  occurrence until the program ends. A `forEach` declares what happens when
+  occurrence until the program ends. Its handler returns `()` or an outcome.
+  A failed outcome is reported to the author, and the loop goes on; to end the
+  program, the handler calls `fail`. A `forEach` declares what happens when
   occurrences arrive while the previous one is still being handled: run them
   one after another, coalesce them, or run them concurrently. The default is
   to coalesce.
