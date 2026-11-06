@@ -1,0 +1,62 @@
+// The host interface of the reference runtime's simulated host
+// (src/runtime/simulated-host.ts). It declares the types, facts and streams
+// that the examples, the standard library and the spec's examples use.
+// `norn check` reads it unless `--host <file>` names another interface file.
+//
+// An interface file holds only `type` and `external` declarations
+// (docs/types.md §7). The host implements every external; the runtime never
+// runs this file. Facts are `event<'a>`: they hold once and stay true.
+// Streams are `stream<'a>`: occurrences that keep happening (spec §6.2).
+
+// A pull request. Only the host makes one, from a fact such as `merged`; a
+// program passes it on, for example to `released(…, ~containing)`.
+type pr
+
+// A release channel.
+type channel = Beta | Stable
+
+// A release published on a channel.
+type release = {version: string}
+
+// What a run reports when it ends. `run` and `start` return one.
+type report = {text: string}
+
+// A message posted in a conversation or a document's discussion.
+type message = {from: participant, text: string}
+
+// Facts --------------------------------------------------------------------
+
+// The pull request "owner/repo#n" has been merged. The value is the pull
+// request.
+external merged: (string) => event<pr>
+
+// A release on the channel contains the pull request. The value is the
+// release.
+external released: (channel, ~containing: pr) => event<release>
+
+// The machine runs at least the given version. The value is the version it
+// runs.
+external machineUpdated: (~machine: string, ~atLeast: string) => event<string>
+
+// The message that the reference points at has a reply, from anyone or, with
+// `~by`, from that participant. The value is the reply.
+external replied: (ref, ~by: participant=?) => event<message>
+
+// The run that the reference points at has ended. The value is how it ended.
+external runEnded: (ref) => event<outcome<report>>
+
+// Streams ------------------------------------------------------------------
+
+// CI failed on the repository "owner/repo". The value names the failed check.
+external ciFailed: (string) => stream<string>
+
+// Something happened on the pull request "owner/repo#n": a push, a review or a
+// comment. The value describes it.
+external prActivity: (string) => stream<string>
+
+// The document changed. The value is its new revision.
+external docChanged: (ref) => stream<string>
+
+// A message was posted in the conversation, by anyone or, with `~from`, by
+// that participant.
+external message: (ref, ~from: participant=?) => stream<message>

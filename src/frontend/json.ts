@@ -6,17 +6,26 @@
  * Writing and reading both check every node against `NODE_SCHEMA`. Neither
  * recurses, so trees of any depth, such as those of long `->` chains, can be
  * written and read. See docs/ast.md.
+ *
+ * A tree is written with the lowest version that can express it: version 2
+ * only when it has a node of `VERSION_2_KINDS` or an abstract type. So the
+ * bytes of a version-1 tree, which pin a running program's code, never change.
  */
 import {
-  NODE_FIELDS, NODE_GROUPS, NODE_SCHEMA, type FieldSchema, type NodeGroup, type NodeKind, type Pos, type Program, type Span,
+  NODE_FIELDS, NODE_GROUPS, NODE_SCHEMA, VERSION_2_KINDS, type FieldSchema, type NodeGroup, type NodeKind, type Pos, type Program,
+  type Span,
 } from "./ast.ts";
 
 export const AST_FORMAT = "norn-ast";
-export const AST_VERSION = 1;
+/** The newest version this front-end reads and writes. */
+export const AST_VERSION = 2;
+/** The versions this front-end reads. */
+export type AstVersion = 1 | 2;
 
 export interface AstDocument {
   format: typeof AST_FORMAT;
-  version: typeof AST_VERSION;
+  /** The lowest version that can express the tree. */
+  version: AstVersion;
   program: Program;
 }
 
@@ -30,13 +39,20 @@ export class AstJsonError extends Error {
   }
 }
 
-/** Serializes a program as a norn-ast JSON document on one line. A tree that breaks the schema is an AstJsonError. */
+/**
+ * Serializes a program as a norn-ast JSON document on one line, with the
+ * lowest version that can express it. A tree that breaks the schema is an
+ * AstJsonError.
+ */
 export function astToJson(program: Program): string {
-  validateProgram(program);
-  return write(program);
+  return write(program, validate(program, AST_VERSION));
 }
 
-/** Reads a norn-ast document, checking every node against the schema. A problem is an AstJsonError that names its path. */
+/**
+ * Reads a norn-ast document of version 1 or 2, checking every node against
+ * the schema. A version-1 document may not hold what version 2 added. A
+ * problem is an AstJsonError that names its path.
+ */
 export function astFromJson(text: string): Program {
   let document: unknown;
   try {
@@ -45,14 +61,16 @@ export function astFromJson(text: string): Program {
     throw new AstJsonError("", `not JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!isObject(document) || document["format"] !== AST_FORMAT) throw new AstJsonError("", `not a ${AST_FORMAT} document`);
-  if (document["version"] !== AST_VERSION) {
-    throw new AstJsonError("version", `unsupported ${AST_FORMAT} version ${describe(document["version"])}; expected ${AST_VERSION}`);
+  const version = document["version"];
+  if (version !== 1 && version !== 2) {
+    throw new AstJsonError("version", `unsupported ${AST_FORMAT} version ${describe(version)}; expected 1 or 2`);
   }
   for (const key of Object.keys(document)) {
     if (key !== "format" && key !== "version" && key !== "program") throw new AstJsonError("", `unknown field ${JSON.stringify(key)} in the document`);
   }
   if (!Object.hasOwn(document, "program")) throw new AstJsonError("", "the document has no program");
-  return validateProgram(document["program"]);
+  validate(document["program"], version);
+  return document["program"] as Program;
 }
 
 /**
@@ -61,10 +79,21 @@ export function astFromJson(text: string): Program {
  * rules out cycles: code that numbers nodes by identity can rely on it.
  */
 export function validateProgram(value: unknown): Program {
-  const tasks: Task[] = [{ value, schema: { node: ["Program"] }, path: { parent: null, segment: "program" } }];
-  const seen = new Set<object>();
-  for (let task = tasks.pop(); task !== undefined; task = tasks.pop()) check(task, tasks, seen);
+  validate(value, AST_VERSION);
   return value as Program;
+}
+
+/** The lowest norn-ast version that can express a well-formed tree: 2 if it has an external, a function type or an abstract type. */
+export function astVersion(program: Program): AstVersion {
+  return validate(program, AST_VERSION);
+}
+
+/** Checks a tree against the schema of a version, and returns the lowest version that can express it. */
+function validate(value: unknown, version: AstVersion): AstVersion {
+  const tasks: Task[] = [{ value, schema: { node: ["Program"] }, path: { parent: null, segment: "program" } }];
+  const context: Context = { seen: new Set<object>(), version, needed: 1 };
+  for (let task = tasks.pop(); task !== undefined; task = tasks.pop()) check(task, tasks, context);
+  return context.needed;
 }
 
 // Checking --------------------------------------------------------------------
@@ -80,6 +109,17 @@ interface Task {
   schema: FieldSchema;
   path: Path;
 }
+
+interface Context {
+  /** The nodes and lists met so far. */
+  seen: Set<object>;
+  /** The version of the document being read: what it may hold. */
+  version: AstVersion;
+  /** The lowest version that can express what was met so far. */
+  needed: AstVersion;
+}
+
+const VERSION_2: ReadonlySet<string> = new Set(VERSION_2_KINDS);
 
 type JsonObject = { [key: string]: unknown };
 
@@ -106,7 +146,7 @@ function fail(path: Path, problem: string): never {
 }
 
 /** Checks one value; what it contains is pushed onto `tasks` in reverse, so problems are found in document order. */
-function check({ value, schema, path }: Task, tasks: Task[], seen: Set<object>): void {
+function check({ value, schema, path }: Task, tasks: Task[], context: Context): void {
   if (typeof schema === "string") return checkScalar(value, schema, path);
   if ("oneOf" in schema) {
     if (typeof value !== "string" || !schema.oneOf.includes(value)) {
@@ -120,13 +160,18 @@ function check({ value, schema, path }: Task, tasks: Task[], seen: Set<object>):
   }
   if ("list" in schema) {
     if (!Array.isArray(value)) fail(path, `expected a list, found ${describe(value)}`);
-    once(value, path, seen);
+    once(value, path, context.seen);
     if (value.length < schema.min) fail(path, `expected at least ${schema.min} ${schema.min === 1 ? "item" : "items"}, found ${value.length}`);
     for (let index = value.length - 1; index >= 0; index -= 1) tasks.push({ value: value[index], schema: schema.list, path: child(path, index) });
     return;
   }
-  checkNode(value, schema.node, path, tasks);
-  once(value as object, path, seen);
+  checkNode(value, schema.node, path, tasks, context);
+  once(value as object, path, context.seen);
+}
+
+function needVersion2(context: Context, path: Path, what: string): void {
+  if (context.version < 2) fail(path, `${what} needs ${AST_FORMAT} version 2, but this document is version ${context.version}`);
+  context.needed = 2;
 }
 
 function once(value: object, path: Path, seen: Set<object>): void {
@@ -134,7 +179,7 @@ function once(value: object, path: Path, seen: Set<object>): void {
   seen.add(value);
 }
 
-function checkNode(value: unknown, allowed: NodeGroup | readonly NodeKind[], path: Path, tasks: Task[]): void {
+function checkNode(value: unknown, allowed: NodeGroup | readonly NodeKind[], path: Path, tasks: Task[], context: Context): void {
   if (!isObject(value)) fail(path, `expected ${expected(allowed)}, found ${describe(value)}`);
   const kind = value["kind"];
   if (kind === undefined) fail(path, `expected ${expected(allowed)}, found an object without a kind`);
@@ -148,6 +193,10 @@ function checkNode(value: unknown, allowed: NodeGroup | readonly NodeKind[], pat
   const fields = NODE_FIELDS[kind] as readonly string[];
   checkKeys(value, ["kind", ...fields, "span"], path);
   checkSpan(value["span"], child(path, "span"));
+  if (VERSION_2.has(kind)) needVersion2(context, path, `${article(kind)} ${kind} node`);
+  if (kind === "TypeDecl" && value["definition"] === null) {
+    needVersion2(context, child(path, "definition"), "an abstract type, whose definition is null,");
+  }
   if (kind === "TemplateLiteral") {
     const { strings, expressions } = value;
     if (Array.isArray(strings) && Array.isArray(expressions) && strings.length !== expressions.length + 1) {
@@ -249,8 +298,8 @@ const COMMA = new Raw(",");
 const CLOSE_LIST = new Raw("]");
 
 /** Writes a checked tree, without recursion. */
-function write(program: Program): string {
-  const out = [`{"format":${JSON.stringify(AST_FORMAT)},"version":${AST_VERSION},"program":`];
+function write(program: Program, version: AstVersion): string {
+  const out = [`{"format":${JSON.stringify(AST_FORMAT)},"version":${version},"program":`];
   const stack: unknown[] = [new Raw("}"), program];
   while (stack.length > 0) {
     const item = stack.pop();

@@ -188,6 +188,7 @@ class Parser {
 
   private parseTopLevelItem(): A.TopLevelItem {
     if (this.at("type")) return this.parseTypeDecl();
+    if (this.atExternal()) return this.parseExternal();
     if (this.at("open")) return this.parseOpen();
     return this.parseStatement();
   }
@@ -196,7 +197,27 @@ class Parser {
     if (this.at("let")) return this.parseLet();
     if (this.at("type")) this.fail("a type declaration is only allowed at the top level of a program");
     if (this.at("open")) this.fail("'open' is only allowed at the top level of a program");
+    if (this.atExternal()) this.fail("an external declaration is only allowed at the top level of a host interface file");
     return this.parseExpression();
+  }
+
+  /**
+   * `external name: type`. `external` is a keyword only here, at the start of
+   * an item and followed by a name on the same line, so programs that use it
+   * as a name keep their meaning.
+   */
+  private atExternal(): boolean {
+    const token = this.peek();
+    const name = this.peek(1);
+    return token.kind === "Ident" && token.text === "external" && name.kind === "Ident" && name.span.start.line === token.span.end.line;
+  }
+
+  private parseExternal(): A.External {
+    const start = this.next();
+    const name = this.next();
+    this.expect(":", `after '${name.text}': an external declares its type, as in external merged: (string) => event<pr>`);
+    const type = this.parseType();
+    return { kind: "External", name: name.text, type, span: this.spanFrom(start) };
   }
 
   /** After a statement: a `;`, a line break, or the end of the enclosing block or case. */
@@ -830,6 +851,10 @@ class Parser {
       }
       this.closeList(">", open, "a type variable");
     }
+    // Without '=', at the end of the line, the type is abstract: `type pr`.
+    if (!this.at("=") && (this.at(";") || this.at("EOF") || this.atLineStart())) {
+      return { kind: "TypeDecl", name: name.text, params, definition: null, span: this.spanFrom(typeToken) };
+    }
     this.expect("=", `after the type name '${name.text}'`);
     const next = this.peek();
     const definition = next.kind === "|" || next.kind === "UIdent"
@@ -880,8 +905,15 @@ class Parser {
     return { kind: "RecordType", fields, span: this.spanFrom(open) };
   }
 
+  /**
+   * A type: `string`, `list<'a>`, `'a`, `(int, string)`, or a function type
+   * such as `(string, ~until: duration=?) => outcome<string>`, `() => time` or
+   * `string => unit`. The result of a function type extends as far right as
+   * it can, so `int => int => int` is `int => (int => int)`.
+   */
   private parseType(): A.TypeExpression {
     const token = this.peek();
+    if (token.kind === "(") return this.parseParenthesizedType();
     let type: A.TypeExpression;
     if (token.kind === "TypeVar") {
       this.next();
@@ -898,24 +930,60 @@ class Parser {
         this.closeList(">", open, "a type");
       }
       type = { kind: "TypeName", name: token.text, args, span: this.spanFrom(token) };
-    } else if (token.kind === "(") {
-      const open = this.next();
-      if (this.at(")")) this.fail("write 'unit' for the unit type");
-      const elements = [this.parseType()];
-      while (this.eat(",")) {
-        if (this.atListEnd(")")) break;
-        elements.push(this.parseType());
-      }
-      this.closeList(")", open, "a type");
-      if (elements.length === 1) type = elements[0]!;
-      else type = { kind: "TupleType", elements, span: this.spanFrom(open) };
     } else if (token.kind === "UIdent") {
       this.fail(`expected a type, found '${token.text}': type names start with a lowercase letter`);
+    } else if (token.kind === "~") {
+      this.fail("a labelled type such as ~until: duration is only allowed among the parameters of a function type");
     } else {
       this.fail(`expected a type, found ${describe(token)}`);
     }
-    if (this.at("=>")) this.fail("function types are not part of Norn v0 type declarations");
-    return type;
+    return this.at("=>") ? this.parseFunctionType(token, [type]) : type;
+  }
+
+  /** `(…)`: the parameters of a function type when `=>` follows, otherwise a tuple type or a parenthesized type. */
+  private parseParenthesizedType(): A.TypeExpression {
+    const open = this.next();
+    const params: A.ParameterType[] = [];
+    while (!this.atListEnd(")")) {
+      params.push(this.parseParameterType());
+      if (!this.eat(",")) break;
+    }
+    const close = this.closeList(")", open, "a type");
+    if (this.at("=>")) return this.parseFunctionType(open, params);
+    const labelled = params.find((param) => param.kind === "LabelledType");
+    if (labelled !== undefined) {
+      this.fail("a labelled type such as ~until: duration is only allowed among the parameters of a function type, which '=>' follows", labelled.span);
+    }
+    const types = params as A.TypeExpression[];
+    if (types.length === 0) this.fail("write 'unit' for the unit type", spanOf(close));
+    if (types.length === 1) return types[0]!;
+    return { kind: "TupleType", elements: types, span: this.spanFrom(open) };
+  }
+
+  /** A positional parameter type, or `~label: type` with `=?` after it when the argument may be left out. */
+  private parseParameterType(): A.ParameterType {
+    const start = this.peek();
+    if (start.kind !== "~") return this.parseType();
+    this.next();
+    const label = this.expectIdent("a label name after '~'");
+    this.expect(":", `after the label '~${label.text}', as in ~${label.text}: duration`);
+    const type = this.parseType();
+    let optional = false;
+    if (this.eat("=")) {
+      if (!this.at("?")) {
+        this.fail(`expected '?' after '=' in a labelled parameter type, as in ~${label.text}: duration=?, found ${describe(this.peek())}`);
+      }
+      this.next();
+      optional = true;
+    }
+    return { kind: "LabelledType", label: label.text, type, optional, span: this.spanFrom(start) };
+  }
+
+  /** After the parameters: `=> result`. */
+  private parseFunctionType(start: Token, params: A.ParameterType[]): A.FunctionType {
+    this.expect("=>", "after the parameters of a function type");
+    const result = this.parseType();
+    return { kind: "FunctionType", params, result, span: this.spanFrom(start) };
   }
 }
 

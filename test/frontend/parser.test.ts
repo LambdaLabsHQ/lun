@@ -254,6 +254,75 @@ test("type declarations: variants, records, aliases and parameters", () => {
   });
 });
 
+test("interface declarations: abstract types, externals and function types", () => {
+  const name = (n: string, ...args: unknown[]) => ({ kind: "TypeName", name: n, args });
+  const fn = (params: unknown[], result: unknown) => ({ kind: "FunctionType", params, result });
+  const labelledType = (label: string, type: unknown, optional = false) => ({ kind: "LabelledType", label, type, optional });
+  assert.deepEqual(item("type pr"), { kind: "TypeDecl", name: "pr", params: [], definition: null });
+  assert.deepEqual(item("type box<'a>"), { kind: "TypeDecl", name: "box", params: [{ kind: "TypeVar", name: "a" }], definition: null });
+  assert.deepEqual(parseOk("type a; type b\ntype c").body.map(strip), ["a", "b", "c"].map((n) => ({ kind: "TypeDecl", name: n, params: [], definition: null })));
+  assert.deepEqual(item("external released: (channel, ~containing: pr) => event<release>"), {
+    kind: "External",
+    name: "released",
+    type: fn([name("channel"), labelledType("containing", name("pr"))], name("event", name("release"))),
+  });
+  assert.deepEqual(item("external ask: (participant, string, ~until: 'd=?) => outcome<string>"), {
+    kind: "External",
+    name: "ask",
+    type: fn([name("participant"), name("string"), labelledType("until", { kind: "TypeVar", name: "d" }, true)], name("outcome", name("string"))),
+  });
+  // `() =>` takes nothing, a bare type takes one argument, and `=>` groups to the right.
+  assert.deepEqual(item("external now: () => time"), { kind: "External", name: "now", type: fn([], name("time")) });
+  assert.deepEqual(item("external k: int => int => int"), { kind: "External", name: "k", type: fn([name("int")], fn([name("int")], name("int"))) });
+  assert.deepEqual(item("external s: (string) => unit"), item("external s: string => unit"));
+  // Two parameters, or one tuple.
+  assert.deepEqual(item("type f = (int, string) => unit"), { kind: "TypeDecl", name: "f", params: [], definition: fn([name("int"), name("string")], name("unit")) });
+  assert.deepEqual(item("type f = ((int, string)) => unit"), {
+    kind: "TypeDecl", name: "f", params: [], definition: fn([{ kind: "TupleType", elements: [name("int"), name("string")] }], name("unit")),
+  });
+  // Function types are ordinary types: in fields, payloads and arguments.
+  assert.deepEqual(item("type job = Job((report) => bool) | Idle"), {
+    kind: "TypeDecl",
+    name: "job",
+    params: [],
+    definition: {
+      kind: "VariantType",
+      constructors: [
+        { kind: "ConstructorDecl", name: "Job", args: [fn([name("report")], name("bool"))] },
+        { kind: "ConstructorDecl", name: "Idle", args: [] },
+      ],
+    },
+  });
+  assert.deepEqual(item("type handlers = {each: list<(time) => unit>}"), {
+    kind: "TypeDecl",
+    name: "handlers",
+    params: [],
+    definition: { kind: "RecordType", fields: [{ kind: "FieldDecl", name: "each", type: name("list", fn([name("time")], name("unit"))) }] },
+  });
+});
+
+test("external is a keyword only at the start of a top-level item", () => {
+  assert.deepEqual(parseOk("let external = 1\nexternal\nf(external)").body.map(strip), [
+    { kind: "Let", pattern: variable("external"), value: int("1") },
+    id("external"),
+    call(id("f"), id("external")),
+  ]);
+});
+
+test("the outline shows interface declarations", () => {
+  assert.deepEqual([...treeLines(parseOk("type pr\nexternal f: (~at: time=?) => pr"))], [
+    "Program  1:1-2:32",
+    "  body:",
+    "    TypeDecl name=\"pr\"  1:1-1:8",
+    "    External name=\"f\"  2:1-2:32",
+    "      type: FunctionType  2:13-2:32",
+    "        params:",
+    "          LabelledType label=\"at\" optional=true  2:14-2:25",
+    "            type: TypeName name=\"time\"  2:19-2:23",
+    "        result: TypeName name=\"pr\"  2:30-2:32",
+  ]);
+});
+
 test("open Std, comments and the program span", () => {
   const program = parseOk("open Std\n// a comment\n/* another */ say(@alice, `hi`)\n");
   assert.deepEqual(program.body.map(strip), [

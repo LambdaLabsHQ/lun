@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AST_FORMAT, AST_VERSION, AstJsonError, astFromJson, astToJson, type Program, type Span } from "../../src/frontend/index.ts";
+import { AST_FORMAT, AST_VERSION, AstJsonError, astFromJson, astToJson, astVersion, type Program, type Span } from "../../src/frontend/index.ts";
 import { parseOk } from "./helpers.ts";
 
 const source = `type probe = Ship | Skip
@@ -32,7 +32,7 @@ test("the writer emits one line, with fields in their documented order", () => {
   assert.ok(!text.includes("\n"));
   const document = JSON.parse(text);
   assert.equal(document.format, AST_FORMAT);
-  assert.equal(document.version, AST_VERSION);
+  assert.equal(document.version, 1);
   assert.deepEqual(document.program, program);
   // Construction order does not matter: keys come out as kind, fields, span.
   const shuffled = { span: span(0, 1), body: [{ span: span(0, 1), name: "x", kind: "Identifier" }], kind: "Program" } as Program;
@@ -62,7 +62,8 @@ const malformed: [string, (document: Json) => unknown, string][] = [
   ["not JSON", () => "{", "not JSON: "],
   ["not an object", () => [], "not a norn-ast document"],
   ["another format", (d) => { d.format = "estree"; }, "not a norn-ast document"],
-  ["another version", (d) => { d.version = 2; }, "version: unsupported norn-ast version 2; expected 1"],
+  ["another version", (d) => { d.version = 3; }, "version: unsupported norn-ast version 3; expected 1 or 2"],
+  ["a version that is not a number", (d) => { d.version = "1"; }, `version: unsupported norn-ast version "1"; expected 1 or 2`],
   ["an unknown document field", (d) => { d.extra = true; }, `unknown field "extra" in the document`],
   ["no program", (d) => { delete d.program; }, "the document has no program"],
   ["a program that is not a Program", (d) => { d.program = d.program.body[2]; }, "program: expected a Program node, found a Let node"],
@@ -106,6 +107,72 @@ const malformed: [string, (document: Json) => unknown, string][] = [
   ["a switch without cases", (d) => { d.program.body[3].cases = []; }, "program.body[3].cases: expected at least 1 item, found 0"],
   ["a template whose strings and expressions do not alternate", (d) => { d.program.body[3].cases[0].body.args[1].strings.pop(); }, "program.body[3].cases[0].body.args[1]: a template has one more string than expressions, found 1 and 1"],
 ];
+
+test("a tree is written with the lowest version that can express it", () => {
+  // Version 1 trees keep their exact bytes: the runtime pins a program's code by a hash of them.
+  assert.equal(AST_VERSION, 2);
+  assert.equal(astVersion(program), 1);
+  assert.ok(text.startsWith(`{"format":"norn-ast","version":1,`));
+  // An external, a function type or an abstract type needs version 2.
+  for (const source of ["type pr", "external now: () => time", "type f = (int) => int", "type g = {f: list<string => unit>}"]) {
+    const tree = parseOk(source);
+    assert.equal(astVersion(tree), 2, source);
+    const written = astToJson(tree);
+    assert.ok(written.startsWith(`{"format":"norn-ast","version":2,"program":`), source);
+    assert.deepEqual(astFromJson(written), tree);
+    assert.equal(astToJson(astFromJson(written)), written);
+  }
+});
+
+test("a version-2 document may hold any tree, and a version-1 document only what version 1 had", () => {
+  // A version-2 document of a version-1 tree reads fine; it is written back as version 1.
+  const upgraded = documentCopy();
+  upgraded.version = 2;
+  assert.deepEqual(astFromJson(JSON.stringify(upgraded)), program);
+  assert.equal(astToJson(astFromJson(JSON.stringify(upgraded))), text);
+  // What version 2 added is refused in a version-1 document, at its path.
+  const downgraded = (source: string): Json => {
+    const document = JSON.parse(astToJson(parseOk(source)));
+    document.version = 1;
+    return JSON.stringify(document);
+  };
+  assert.throws(() => astFromJson(downgraded("external now: () => time")), {
+    name: "AstJsonError",
+    message: "program.body[0]: an External node needs norn-ast version 2, but this document is version 1",
+  });
+  assert.throws(() => astFromJson(downgraded("type f = (~at: time=?) => int")), {
+    message: "program.body[0].definition: a FunctionType node needs norn-ast version 2, but this document is version 1",
+  });
+  assert.throws(() => astFromJson(downgraded("type pr")), {
+    message: "program.body[0].definition: an abstract type, whose definition is null, needs norn-ast version 2, but this document is version 1",
+  });
+  // A labelled type only appears inside a function type, which is refused first.
+  const labelled = JSON.parse(astToJson(parseOk("type f = (~at: time) => int")));
+  labelled.version = 1;
+  labelled.program.body[0].definition.kind = "TupleType";
+  labelled.program.body[0].definition.elements = [labelled.program.body[0].definition.params[0], labelled.program.body[0].definition.result];
+  delete labelled.program.body[0].definition.params;
+  delete labelled.program.body[0].definition.result;
+  assert.throws(() => astFromJson(JSON.stringify(labelled)), {
+    message: "program.body[0].definition.elements[0]: expected a type, found a LabelledType node",
+  });
+});
+
+test("the version-2 schema is checked like the rest", () => {
+  const document = JSON.parse(astToJson(parseOk("external f: (string, ~until: time=?) => event<pr>")));
+  const external = document.program.body[0];
+  const refused = (change: (external: Json) => void, message: string) => {
+    const copy = structuredClone(document);
+    change(copy.program.body[0]);
+    assert.throws(() => astFromJson(JSON.stringify(copy)), { name: "AstJsonError", message });
+  };
+  assert.equal(external.type.params[1].kind, "LabelledType");
+  refused((e) => { e.type.params[1].optional = "yes"; }, `program.body[0].type.params[1].optional: expected true or false, found "yes"`);
+  refused((e) => { delete e.type.result; }, `program.body[0].type: missing field "result"`);
+  refused((e) => { e.type.result = e.type.params[1]; }, "program.body[0].type.result: expected a type, found a LabelledType node");
+  refused((e) => { e.type = null; }, "program.body[0].type: expected a type, found null");
+  refused((e) => { e.name = 1; }, "program.body[0].name: expected a string, found 1");
+});
 
 test("reading refuses a malformed document, naming the path of the problem", () => {
   for (const [rule, change, message] of malformed) {

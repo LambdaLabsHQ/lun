@@ -62,14 +62,26 @@ else for (const d of result.diagnostics) console.error(formatDiagnostic(d, sourc
 
 ## Stability
 
-The JSON document carries `"format": "norn-ast"` and `"version": 1`.
+The JSON document carries `"format": "norn-ast"` and a `"version"`, 1 or 2.
 `NODE_FIELDS` and `NODE_SCHEMA` are part of the contract.
 
-- Any change to the shape of an existing node kind bumps the version. This
-  includes renaming, removing or retyping a field, or changing how existing
-  source maps onto nodes.
-- A new node kind for syntax that did not parse before keeps the version, and
-  its pull request says so.
+- **Version 2** added what host interface files need: the node kinds
+  `External`, `FunctionType` and `LabelledType` (`VERSION_2_KINDS` in
+  `ast.ts`), and a `TypeDecl` whose `definition` is null, for an abstract
+  type.
+- **The lowest version that can express a tree is the one written.** A tree
+  with none of the version-2 additions is written as version 1, byte for byte
+  as before. The runtime pins a program's code by a hash of those bytes, so
+  ordinary programs keep their code identity. `astVersion(program)` gives the
+  version a tree needs.
+- **Reading.** `astFromJson` reads both versions. A version-1 document that
+  holds a version-2 addition is refused at its path. A version-2 document may
+  hold any tree.
+- **Changes.** Any change to the shape of an existing node kind bumps the
+  version. This includes renaming, removing or retyping a field, letting a
+  field hold what it could not hold before, or changing how existing source
+  maps onto nodes. So does a new node kind: a reader that predates it would
+  refuse it anyway, and the version says why.
 
 ## The JSON document
 
@@ -158,7 +170,8 @@ Conventions:
 tree that is already in memory.
 
 **What is checked.** Both check every node against `NODE_SCHEMA`, and so does
-`astToJson` before it writes:
+`astToJson` before it writes. Reading a version-1 document also refuses what
+version 2 added:
 
 - **Nodes.** Each node has a known `kind`, and exactly the fields of
   `NODE_FIELDS` plus `span`, no more and no less.
@@ -187,7 +200,7 @@ tree that is already in memory.
   out cycles. Spans may be shared in a tree built by hand; only nodes and
   lists have an identity that matters.
 - **The document around the tree** is exactly `format`, `version` and
-  `program`.
+  `program`, and `version` is 1 or 2.
 
 **Errors.** A problem is an `AstJsonError`. It names the JSON path of the first
 problem in document order:
@@ -196,6 +209,7 @@ problem in document order:
 program.body[2].value.args[0]: unknown field "foo"
 program.body[2].pattern: expected a pattern, found an Identifier node
 program.body[3].cases: expected at least 1 item, found 0
+program.body[0]: an External node needs norn-ast version 2, but this document is version 1
 ```
 
 The checks do not recurse, so a document of any depth is read or refused
@@ -204,19 +218,28 @@ cleanly.
 ## Nodes
 
 `TopLevelItem`, `Statement`, `Expression`, `Argument`, `Parameter`,
-`Pattern` and `TypeExpression` are unions of node kinds; `AstNode` is every
-kind.
+`Pattern`, `TypeExpression` and `ParameterType` are unions of node kinds;
+`AstNode` is every kind.
 
 ### Program and top level
 
 | Kind | Fields | Source |
 |---|---|---|
 | `Program` | `body: TopLevelItem[]` | a whole file |
-| `TypeDecl` | `name: string`, `params: TypeVar[]`, `definition: VariantType \| RecordType \| TypeExpression` | `type probe = Ship \| Skip` |
+| `TypeDecl` | `name: string`, `params: TypeVar[]`, `definition: VariantType \| RecordType \| TypeExpression \| null` | `type probe = Ship \| Skip`, `type pr` |
+| `External` | `name: string`, `type: TypeExpression` | `external merged: (string) => event<pr>` |
 | `Open` | `module: "Std"` | `open Std` |
 
-`TopLevelItem` is `TypeDecl | Open | Statement`. A program's items run in
-order. Type declarations and `open` appear only at the top level.
+`TopLevelItem` is `TypeDecl | External | Open | Statement`. A program's items
+run in order. Type declarations, externals and `open` appear only at the top
+level.
+
+- **Abstract types.** A `TypeDecl` without `=` has a null `definition`: its
+  values are made only by the host, as with `type pr`.
+- **Externals** declare a value that the host supplies, with its type.
+- Only a host interface file may declare an abstract type or an external. The
+  parser accepts them anywhere at the top level; the type checker refuses them
+  in a program (docs/types.md §7). Both need version 2 of the JSON form.
 
 ### Statements
 
@@ -339,22 +362,32 @@ Details:
 
 ### Types
 
-Types appear only in `type` declarations: v0 programs carry no annotations
-(§4).
+Types appear only in `type` and `external` declarations: v0 programs carry no
+annotations (§4).
 
 | Kind | Fields | Source |
 |---|---|---|
 | `TypeName` | `name: string`, `args: TypeExpression[]` | `string`, `list<'a>` |
 | `TypeVar` | `name: string` | `'a` (the name is `a`) |
 | `TupleType` | `elements: TypeExpression[]` | `(int, string)` |
+| `FunctionType` | `params: ParameterType[]`, `result: TypeExpression` | `(string, ~containing: pr) => event<release>` |
+| `LabelledType` | `label: string`, `type: TypeExpression`, `optional: boolean` | `~containing: pr`, `~until: duration=?` |
 | `VariantType` | `constructors: ConstructorDecl[]` | `Ship \| Skip \| Later(duration)` |
 | `ConstructorDecl` | `name: string`, `args: TypeExpression[]` | `Later(duration)` |
 | `RecordType` | `fields: FieldDecl[]` | `{version: string}` |
 | `FieldDecl` | `name: string`, `type: TypeExpression` | `version: string` |
 
-`TypeExpression` is `TypeName | TypeVar | TupleType`. A `TypeDecl`'s
-definition is a `VariantType`, a `RecordType`, or a `TypeExpression` for an
-alias such as `type id = string`.
+`TypeExpression` is `TypeName | TypeVar | TupleType | FunctionType`. A
+`TypeDecl`'s definition is a `VariantType`, a `RecordType`, a
+`TypeExpression` for an alias such as `type id = string`, or null for an
+abstract type.
+
+- **Function types** are uncurried. `ParameterType` is
+  `TypeExpression | LabelledType`; positional and labelled parameters keep
+  source order, and `params` is empty for `() => time`.
+  - `LabelledType.optional` is true for `~label: type=?`, a parameter that a
+    caller may leave out.
+  - `FunctionType` and `LabelledType` need version 2 of the JSON form.
 
 ## Syntax notes
 
@@ -402,11 +435,25 @@ otherwise.
   `Foo()` is an error.
 - **Literal patterns** are strings, numbers (optionally negative), booleans and
   `()`. To test a participant or a time, use `==` in a guard.
+- **Function types**, as in ReScript:
+  - `(T, ~label: U, ~other: V=?) => R` lists the parameters in parentheses.
+    A labelled parameter type is allowed only there.
+  - `() => R` takes no arguments, and `T => R` takes one: `string => unit` is
+    `(string) => unit`.
+  - `(int, string) => R` takes two arguments; `((int, string)) => R` takes
+    one tuple.
+  - `=>` groups to the right: `int => int => int` is `int => (int => int)`.
+- **Abstract types and externals.** `type pr`, with nothing after the name on
+  its line, is abstract. `external name: type` declares a value the host
+  supplies.
 - **Lexical rules.**
   - Value, field, label and type names are `[a-z_][A-Za-z0-9_]*`.
     Constructors and `Std` are `[A-Z][A-Za-z0-9_]*`.
   - The keywords are `let`, `rec`, `and`, `if`, `else`, `switch`, `type`,
     `open`, `true`, `false` and `as`.
+  - `external` is a keyword only at the start of a top-level item, followed by
+    a name on the same line. Elsewhere it is an ordinary name, so programs
+    that used it as one keep their meaning.
   - Comments are `//` to the end of the line, and `/* … */`, which does not
     nest.
   - String escapes are `\n`, `\r`, `\t`, `\\`, `\"`, `\'`, `` \` ``, `\$`,
@@ -437,9 +484,10 @@ unchanged.
    - `~every as period` binds the argument labelled `every` to `period`;
    - `~until` alone means `~until=until`.
 6. **`~x=?` is signature notation.** §6.1 writes optional arguments as
-   `~until=?`. That describes built-in signatures and is not v0 source
-   syntax: a user function's optional labelled parameter has a default, as in
-   `~on=[]`.
+   `~until=?`. That describes built-in signatures. In source it appears only
+   in function types, as in `external run: (participant, string, ~until:
+   duration=?) => outcome<report>`. A user function's optional labelled
+   parameter has a default, as in `~on=[]`, and a call never writes `~x=?`.
 7. **`[a, b]` is a list.** §4 names `list<'a>` and §3 writes
    `~options=[Ship, Skip]`, so the square-bracket literal builds an immutable
    list. ReScript's arrays and `list{…}` are not part of Norn.
@@ -471,13 +519,13 @@ unchanged.
 
 ## Notes for later phases
 
-These come from reading the spec while writing the parser. They are not
-decided here.
+Reading the spec while writing the parser raised two questions. Both are
+settled:
 
-- **The push loop's `?` and its result type.** In §3's push loop, `?` makes
-  `push` return the outcome of `run` or `judge` early, while its normal result
-  is `()`, the value of an `if` without `else`. Hindley–Milner inference needs
-  one result type for both paths. Either the type rules for `?` or the
-  example must change.
-- **Functions that §6 does not define.** §3 and §8 call `sleepUntil`,
-  `mergeAll`, `show`, `name` and `machineUpdated`. §6 does not define them.
+- **The push loop's `?` and its result type.** §3's push loop now ends with
+  `Done(report)`, so both of its paths return an outcome, as the typing of `?`
+  needs ([types](types.md) §4).
+- **Functions that §6 did not define.** `sleepUntil`, `mergeAll` and `name`
+  are gone from the spec, `show` is a built-in (§6.1), and `machineUpdated` is
+  a fact that the host declares in its interface file
+  ([`hosts/reference.norn`](../hosts/reference.norn)).
