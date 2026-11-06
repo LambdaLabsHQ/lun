@@ -7,78 +7,83 @@ import { DatabaseSync } from "node:sqlite";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { promisify } from "node:util";
-import { effectId, type InitialCheckpoint, type Json } from "../../src/runtime/persistence.ts";
+import { effectId, requestId, type InitialCheckpoint, type Json } from "../../src/runtime/persistence.ts";
 import { SqliteStore } from "../../src/runtime/sqlite-store.ts";
 
 const initial: InitialCheckpoint = {
   executionId: "program/one", codeId: "code:one", machineVersion: "cek:1", status: "ready",
   snapshot: { control: 0, frames: [], environments: { root: { bindings: {} } } },
 };
-
-function fixture(t: { after: (fn: () => void) => void }) {
+function fixture(t: { after: (fn: () => Promise<void>) => void }) {
   const directory = mkdtempSync(join(tmpdir(), "norn-store-"));
   const path = join(directory, "runtime.sqlite");
   const stores: SqliteStore[] = [];
-  t.after(() => {
-    for (const store of stores) store.close();
+  t.after(async () => {
+    for (const store of stores) await store.close();
     rmSync(directory, { recursive: true, force: true });
   });
   return () => { const store = new SqliteStore(path); stores.push(store); return store; };
 }
+async function pending(store: SqliteStore, execution = initial.executionId) {
+  await store.create({ ...initial, executionId: execution });
+  return (await store.commit((await store.load(execution))!, {
+    status: "suspended", snapshot: { continuation: "next" },
+    waitingFor: { kind: "delivery", id: effectId(execution, 1) },
+    effects: [{ operation: "run", arguments: "original work" }],
+  }))!;
+}
+async function requested(store: SqliteStore, execution = initial.executionId) {
+  await store.create({ ...initial, executionId: execution });
+  return (await store.commit((await store.load(execution))!, {
+    status: "suspended", snapshot: { continuation: "after-answer" },
+    waitingFor: { kind: "request", id: requestId(execution, 1) },
+    requests: [{ holder: "alice", arguments: { text: "Ship?" } }],
+  }))!;
+}
 
-test("a restart restores lexical references and an undelivered original intent", (t) => {
+test("a restart restores lexical references and its original undelivered intent", async (t) => {
   const open = fixture(t);
   const first = open();
-  assert.equal(first.create(initial), true);
+  await first.create(initial);
   const saved = {
     control: { kind: "effect", id: effectId(initial.executionId, 1) },
     frames: [{ kind: "call", environment: "root" }],
     environments: { root: { bindings: { next: { closure: "fn1", environment: "root" } } } },
   };
-  const committed = first.commit(first.load(initial.executionId)!, {
+  const committed = (await first.commit((await first.load(initial.executionId))!, {
     status: "suspended", snapshot: saved,
     effects: [{ operation: "ask", arguments: { who: "alice", text: "Ship?" } }],
-  })!;
-  first.close();
-
+  }))!;
+  await first.close();
   const resumed = open();
-  assert.deepEqual(resumed.load(initial.executionId), committed.checkpoint);
-  assert.deepEqual(resumed.load(initial.executionId)!.snapshot, saved);
-  assert.deepEqual(resumed.effects(initial.executionId), committed.effects);
-  assert.equal(resumed.effects(initial.executionId)[0].status, "pending");
+  assert.deepEqual(await resumed.load(initial.executionId), committed.checkpoint);
+  assert.deepEqual((await resumed.load(initial.executionId))!.snapshot, saved);
+  assert.deepEqual(await resumed.effects(initial.executionId), committed.effects);
 });
 
-test("two workers at the same revision can commit only one state and outbox", (t) => {
-  const open = fixture(t);
-  const a = open();
-  const b = open();
-  a.create(initial);
-  const beforeA = a.load(initial.executionId)!;
-  const beforeB = b.load(initial.executionId)!;
-  const winner = a.commit(beforeA, {
-    status: "suspended", snapshot: { winner: "a" },
-    effects: [{ operation: "run", arguments: "first request" }],
-  });
-  const loser = b.commit(beforeB, {
-    status: "suspended", snapshot: { winner: "b" },
-    effects: [{ operation: "run", arguments: "second request" }],
-  });
+test("two workers at one revision commit only one checkpoint and outbox", async (t) => {
+  const open = fixture(t), a = open(), b = open();
+  await a.create(initial);
+  const beforeA = (await a.load(initial.executionId))!, beforeB = (await b.load(initial.executionId))!;
+  const [winner, loser] = await Promise.all([
+    a.commit(beforeA, { status: "suspended", snapshot: "a", effects: [{ operation: "run", arguments: "first" }] }),
+    b.commit(beforeB, { status: "suspended", snapshot: "b", effects: [{ operation: "run", arguments: "second" }] }),
+  ]);
   assert.ok(winner);
   assert.equal(loser, null);
-  assert.deepEqual(b.load(initial.executionId)!.snapshot, { winner: "a" });
-  assert.equal(b.effects(initial.executionId).length, 1);
-  assert.equal(b.effects(initial.executionId)[0].arguments, "first request");
+  assert.equal((await b.load(initial.executionId))!.snapshot, "a");
+  assert.equal((await b.effects(initial.executionId)).length, 1);
 });
 
-test("a process killed after commit leaves both its checkpoint and original intent", { timeout: 10_000 }, async (t) => {
+test("SIGKILL after commit retains both checkpoint and original intent", { timeout: 10_000 }, async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "norn-crash-"));
   const path = join(directory, "runtime.sqlite");
   const moduleUrl = new URL("../../src/runtime/sqlite-store.ts", import.meta.url).href;
   const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", `
     import { SqliteStore } from ${JSON.stringify(moduleUrl)};
     const store = new SqliteStore(${JSON.stringify(path)});
-    store.create(${JSON.stringify(initial)});
-    store.commit(store.load(${JSON.stringify(initial.executionId)}), {
+    await store.create(${JSON.stringify(initial)});
+    await store.commit(await store.load(${JSON.stringify(initial.executionId)}), {
       status: 'suspended', snapshot: { continuation: 'after-the-request' },
       effects: [{ operation: 'run', arguments: 'one original request' }]
     });
@@ -87,116 +92,193 @@ test("a process killed after commit leaves both its checkpoint and original inte
   `], { stdio: ["ignore", "pipe", "pipe"] });
   t.after(() => child.kill("SIGKILL"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  await Promise.race([
-    once(child.stdout, "data"),
-    once(child, "exit").then(() => { throw new Error("child exited before committing"); }),
-  ]);
-  const exited = once(child, "exit");
-  child.kill("SIGKILL");
-  await exited;
+  await Promise.race([once(child.stdout, "data"), once(child, "exit").then(() => { throw new Error("child exited before committing"); })]);
+  const exited = once(child, "exit"); child.kill("SIGKILL"); await exited;
   const recovered = new SqliteStore(path);
   try {
-    assert.deepEqual(recovered.load(initial.executionId)!.snapshot, { continuation: "after-the-request" });
-    const [effect] = recovered.effects(initial.executionId);
-    assert.equal(effect.status, "pending");
-    assert.equal(effect.arguments, "one original request");
-    assert.equal(recovered.effects(initial.executionId).length, 1);
-  } finally { recovered.close(); }
+    assert.deepEqual((await recovered.load(initial.executionId))!.snapshot, { continuation: "after-the-request" });
+    const effects = await recovered.effects(initial.executionId);
+    assert.equal(effects.length, 1);
+    assert.equal(effects[0].status, "pending");
+    assert.equal(effects[0].arguments, "one original request");
+  } finally { await recovered.close(); }
 });
 
-test("a dispatch crash stays uncertain and records one original result", (t) => {
-  const open = fixture(t);
-  const sender = open();
-  const other = open();
-  sender.create(initial);
-  const effect = sender.commit(sender.load(initial.executionId)!, {
-    status: "suspended", snapshot: { waiting: true },
-    effects: [{ operation: "run", arguments: "do the work" }],
-  })!.effects[0];
-  assert.equal(sender.beginDispatch(effect.id), true);
-  assert.equal(other.beginDispatch(effect.id), false);
-  sender.close(); // The transport may have sent; its acknowledgement is lost.
+test("cancellation withdraws queued work atomically but retains terminal notices", async (t) => {
+  const open = fixture(t), store = open(), observer = open();
+  const committed = await requested(store);
+  const cancelled = await store.commit(committed.checkpoint, {
+    status: "cancelled", snapshot: "stopped", effects: [{ operation: "notify", arguments: "owner", kind: "notification" }],
+  });
+  assert.ok(cancelled);
+  const effects = await observer.effects(initial.executionId);
+  assert.equal(effects.find(e => e.operation === "request.offer")!.status, "withdrawn");
+  assert.equal(await observer.claimEffect(committed.effects[0].id, "late-sender", 0, 100), null);
+  assert.deepEqual((await observer.request(committed.requests[0].id))!.outcome, { tag: "Cancelled" });
+  assert.ok((await observer.scanEffects(0)).every(e => e.kind === "notification"));
+  assert.equal(await observer.settleRequest(committed.requests[0].id, 0, "alice", { tag: "Done", value: "too late" }), false);
+  await assert.rejects(store.commit(cancelled!.checkpoint, { status: "completed", snapshot: null,
+    effects: [{ operation: "run", arguments: "new work after termination" }] }), /cannot create new work/);
+});
 
+test("dead dispatchers are recovered for reconciliation, never an automatic resend", async (t) => {
+  const open = fixture(t), a = open(), b = open();
+  const { effects: [effect] } = await pending(a);
+  const first = (await a.claimEffect(effect.id, "first", 100, 20))!;
+  assert.equal(first.mode, "send");
+  assert.equal(await b.claimEffect(effect.id, "second", 119, 20), null);
+  await a.close();
   const recovered = open();
-  assert.equal(recovered.effects(initial.executionId)[0].status, "dispatching");
-  assert.equal(recovered.beginDispatch(effect.id), false);
-  assert.equal(recovered.markUncertain(effect.id, "reconcile original request"), true);
-  assert.equal(recovered.recordResult(effect.id, { tag: "Done", value: "original receipt" }), true);
-  assert.equal(recovered.recordResult(effect.id, { tag: "Failed", value: "duplicate" }), false);
-  assert.deepEqual(recovered.effects(initial.executionId)[0].result, { tag: "Done", value: "original receipt" });
-  assert.equal(recovered.load(initial.executionId)!.revision, 1); // Receipt alone never resumes code.
+  assert.equal((await recovered.scanEffects(119)).length, 0);
+  assert.equal((await recovered.scanEffects(120))[0].id, effect.id);
+  const next = (await recovered.claimEffect(effect.id, "second", 120, 20))!;
+  assert.equal(next.mode, "reconcile");
+  assert.equal(next.effect.id, first.effect.id);
+  assert.equal(await b.recordDelivery(first, "stale receipt", 121), false);
+  assert.equal(await b.markUncertain(first, "stale writer", 121), false);
+  await assert.rejects(recovered.prepareRetry(next, "expired" as never, 121), /host evidence/);
+  const retry = (await recovered.prepareRetry(next, "host-deduplicates-original-id", 121))!;
+  assert.equal(retry.mode, "send");
+  assert.equal(retry.effect.id, effect.id);
+  assert.equal(await recovered.recordDelivery(retry, { delivered: true }, 122), true);
+  assert.equal(await recovered.recordDelivery(retry, "duplicate", 123), false);
 });
 
-test("nonportable state cannot partially save an execution or effect", (t) => {
+test("unknown delivery remains recoverable without manufacturing success", async (t) => {
   const store = fixture(t)();
-  store.create(initial);
-  const expected = store.load(initial.executionId)!;
-  const arrayWithHook = Object.assign([1], { toJSON: () => "lost the original state" });
-  const arrayWithGetter = Object.defineProperty([1], "0", { enumerable: true, get() { throw new Error("getter must never run"); } });
-  for (const bad of [undefined, () => 1, NaN, Infinity, -0, new Date(), { hidden: undefined }, arrayWithHook, arrayWithGetter, Array(2)]) {
-    assert.throws(() => store.commit(expected, {
-      status: "suspended", snapshot: { changed: true },
-      effects: [{ operation: "ask", arguments: bad as Json }],
-    }), /Snapshot/);
-    assert.deepEqual(store.load(initial.executionId), expected);
-    assert.deepEqual(store.effects(initial.executionId), []);
-  }
-  const cyclic: Record<string, Json> = {};
-  cyclic.self = cyclic;
-  assert.throws(() => store.commit(expected, { status: "ready", snapshot: cyclic }), /explicit references/);
+  const { effects: [effect] } = await pending(store);
+  const claim = (await store.claimEffect(effect.id, "a", 0, 10))!;
+  assert.equal(await store.markUncertain(claim, "no transport acknowledgement", 1), true);
+  const reconcile = (await store.claimEffect(effect.id, "b", 2, 10))!;
+  assert.equal(reconcile.mode, "reconcile");
+  assert.equal((await store.effects(initial.executionId))[0].receipt, null);
+  assert.equal((await store.scanReady()).length, 0);
+  await store.commit((await store.load(initial.executionId))!, { status: "revoked", snapshot: null });
+  assert.equal(await store.prepareRetry(reconcile, "host-deduplicates-original-id", 3), null);
+  assert.equal(await store.recordDelivery(reconcile, "original delivery confirmed after revocation", 3), true);
+  assert.equal((await store.scanReady()).length, 0);
 });
 
-test("independent processes can initialize and write the same fresh store", async (t) => {
+test("delivery acknowledgement and weeks-later request outcome are independent", async (t) => {
+  const open = fixture(t), store = open();
+  const { requests: [request], effects: [offer] } = await requested(store);
+  const claim = (await store.claimEffect(offer.id, "sender", 0, 100))!;
+  assert.equal(await store.recordDelivery(claim, { accepted: true }, 1), true);
+  assert.equal((await store.request(request.id))!.outcome, null);
+  assert.deepEqual(await store.scanReady(), []);
+  await store.close();
+  const later = open();
+  assert.equal(await later.settleRequest(request.id, 0, "alice", { tag: "Done", value: "Ship" }), true);
+  assert.equal(await later.settleRequest(request.id, 0, "alice", { tag: "Done", value: "Skip" }), false);
+  assert.equal((await later.scanReady())[0].executionId, initial.executionId);
+  assert.equal((await later.load(initial.executionId))!.revision, 1); // Input alone never executes code.
+  assert.deepEqual((await later.effects(initial.executionId)).find(e => e.id === offer.id)!.receipt, { accepted: true });
+});
+
+test("handover keeps the request and fences replies from its previous holder", async (t) => {
+  const store = fixture(t)();
+  const { requests: [request] } = await requested(store);
+  assert.equal(await store.handOver(request.id, 0, "mallory", "bob"), null);
+  const moved = (await store.handOver(request.id, 0, "alice", "bob"))!;
+  assert.equal(moved.id, request.id);
+  assert.equal(moved.epoch, 1);
+  assert.equal(moved.outcome, null);
+  assert.equal(await store.settleRequest(request.id, 0, "alice", { tag: "Done", value: "late" }), false);
+  assert.equal(await store.settleRequest(request.id, 1, "alice", { tag: "Done", value: "wrong holder" }), false);
+  assert.equal(await store.settleRequest(request.id, 1, "bob", { tag: "Declined", reason: "busy" }), true);
+  assert.equal(await store.handOver(request.id, 1, "bob", "charlie"), null);
+  const effects = await store.effects(initial.executionId);
+  assert.ok(effects.some(e => e.operation === "request.released"));
+  assert.ok(effects.some(e => e.operation === "request.closed"));
+});
+
+test("handover fences resending an old offer even when its host supports deduplication", async (t) => {
+  const store = fixture(t)();
+  const { requests: [request], effects: [offer] } = await requested(store);
+  const sending = (await store.claimEffect(offer.id, "old-worker", 0, 10))!;
+  await store.handOver(request.id, 0, "alice", "bob");
+  const reconcile = (await store.claimEffect(offer.id, "new-worker", 10, 10))!;
+  assert.equal(reconcile.mode, "reconcile");
+  assert.equal(await store.prepareRetry(reconcile, "host-deduplicates-original-id", 11), null);
+  assert.equal(await store.recordDelivery(sending, "late old acknowledgement", 11), false);
+  assert.equal(await store.recordDelivery(reconcile, "old offer was delivered", 11), true);
+  assert.equal((await store.request(request.id))!.holder, "bob");
+});
+
+test("recovery discovers ready programs and effects with keyset pagination", async (t) => {
+  const store = fixture(t)();
+  for (const name of ["a", "b", "c"]) await pending(store, name);
+  const first = await store.scanEffects(0, { limit: 2 });
+  const second = await store.scanEffects(0, { limit: 2, after: first[1].id });
+  assert.deepEqual([...first, ...second].map(e => e.executionId), ["a", "b", "c"]);
+  for (const effect of [...first, ...second]) {
+    const claim = (await store.claimEffect(effect.id, "sender", 0, 10))!;
+    await store.recordDelivery(claim, "delivered", 1);
+  }
+  const ready = await store.scanReady({ limit: 2 });
+  assert.deepEqual(ready.map(e => e.executionId), ["a", "b"]);
+  assert.deepEqual((await store.scanReady({ after: ready[1].executionId })).map(e => e.executionId), ["c"]);
+});
+
+test("nonportable data and invalid wait dependencies cannot partially commit", async (t) => {
+  const store = fixture(t)(); await store.create(initial);
+  const expected = (await store.load(initial.executionId))!;
+  const hook = Object.assign([1], { toJSON: () => "lost" });
+  const getter = Object.defineProperty([1], "0", { enumerable: true, get() { throw new Error("getter must never run"); } });
+  for (const bad of [undefined, () => 1, NaN, Infinity, -0, new Date(), { hidden: undefined }, hook, getter, Array(2)]) {
+    await assert.rejects(store.commit(expected, { status: "suspended", snapshot: null,
+      effects: [{ operation: "ask", arguments: bad as Json }] }), /Snapshot/);
+    assert.deepEqual(await store.load(initial.executionId), expected);
+    assert.deepEqual(await store.effects(initial.executionId), []);
+  }
+  const cyclic: Record<string, Json> = {}; cyclic.self = cyclic;
+  await assert.rejects(store.commit(expected, { status: "ready", snapshot: cyclic }), /explicit references/);
+  await assert.rejects(store.commit(expected, { status: "suspended", snapshot: null,
+    waitingFor: { kind: "request", id: "not-mine" }, requests: [{ holder: "alice", arguments: "new" }] }), /own durable/);
+  assert.deepEqual(await store.load(initial.executionId), expected);
+  assert.deepEqual(await store.effects(initial.executionId), []);
+});
+
+test("independent processes initialize and write the same fresh store", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "norn-workers-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, "runtime.sqlite");
   const moduleUrl = new URL("../../src/runtime/sqlite-store.ts", import.meta.url).href;
   const exec = promisify(execFile);
-  await Promise.all(["worker-a", "worker-b"].map((executionId) => exec(process.execPath, [
+  await Promise.all(["worker-a", "worker-b"].map(executionId => exec(process.execPath, [
     "--experimental-strip-types", "--input-type=module", "-e",
     `import { SqliteStore } from ${JSON.stringify(moduleUrl)};
      const store = new SqliteStore(${JSON.stringify(path)});
-     store.create(${JSON.stringify({ ...initial, executionId })});
-     store.close();`,
+     await store.create(${JSON.stringify({ ...initial, executionId })}); await store.close();`,
   ])));
   const store = new SqliteStore(path);
-  try {
-    assert.ok(store.load("worker-a"));
-    assert.ok(store.load("worker-b"));
-  } finally { store.close(); }
+  try { assert.ok(await store.load("worker-a")); assert.ok(await store.load("worker-b")); }
+  finally { await store.close(); }
 });
 
-test("a different pinned definition, ABI, or terminal execution cannot resume", (t) => {
-  const store = fixture(t)();
-  store.create(initial);
-  const before = store.load(initial.executionId)!;
-  assert.equal(store.commit({ ...before, codeId: "replacement" }, { status: "ready", snapshot: null }), null);
-  assert.equal(store.commit({ ...before, machineVersion: "cek:2" }, { status: "ready", snapshot: null }), null);
-  const done = store.commit(before, { status: "completed", snapshot: "result" })!.checkpoint;
-  assert.equal(store.commit(done, { status: "ready", snapshot: "revived" }), null);
-  assert.deepEqual(store.load(initial.executionId)!.snapshot, "result");
+test("pinned code, ABI and terminal state cannot be replaced on resumption", async (t) => {
+  const store = fixture(t)(); await store.create(initial);
+  const before = (await store.load(initial.executionId))!;
+  assert.equal(await store.commit({ ...before, codeId: "replacement" }, { status: "ready", snapshot: null }), null);
+  assert.equal(await store.commit({ ...before, machineVersion: "cek:2" }, { status: "ready", snapshot: null }), null);
+  const done = (await store.commit(before, { status: "completed", snapshot: "result" }))!.checkpoint;
+  assert.equal(await store.commit(done, { status: "ready", snapshot: "revived" }), null);
 });
 
-test("an unsupported database is refused without rewriting its schema version", (t) => {
+test("unsupported database versions are refused without rewriting them", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "norn-newer-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, "runtime.sqlite");
-  const db = new DatabaseSync(path);
-  db.exec("PRAGMA user_version = 99");
-  db.close();
+  const db = new DatabaseSync(path); db.exec("PRAGMA user_version = 99"); db.close();
   assert.throws(() => new SqliteStore(path), /migration is required/);
   const check = new DatabaseSync(path);
-  assert.equal(check.prepare("PRAGMA user_version").get()!.user_version, 99);
-  check.close();
+  assert.equal(check.prepare("PRAGMA user_version").get()!.user_version, 99); check.close();
 });
 
-test("a new on-disk snapshot database is private to its OS user", { skip: process.platform === "win32" }, (t) => {
+test("new snapshot databases are private to their OS user", { skip: process.platform === "win32" }, async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "norn-private-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const path = join(directory, "runtime.sqlite");
-  const store = new SqliteStore(path);
-  try {
-    store.create({ ...initial, snapshot: { privateMessage: "synthetic captured input" } });
-    assert.equal(statSync(path).mode & 0o777, 0o600);
-  } finally { store.close(); }
+  const path = join(directory, "runtime.sqlite"), store = new SqliteStore(path);
+  try { await store.create(initial); assert.equal(statSync(path).mode & 0o777, 0o600); }
+  finally { await store.close(); }
 });

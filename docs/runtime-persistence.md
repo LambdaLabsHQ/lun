@@ -1,65 +1,80 @@
 # Local runtime persistence
 
-The first local persistence adapter is SQLite, using Node's built-in
-`node:sqlite`. It is a reference implementation, not an xMatrix deployment or a
-claim that every runtime conformance case already passes. Node 22's SQLite API
-is experimental. A browser or cloud host can implement `DurableStore` with a
-different backend; the language does not depend on SQLite.
+The SQLite adapter in `src/runtime/` is the local reference backend, using Node's
+built-in `node:sqlite`. It is not an xMatrix deployment. The `DurableStore`
+interface is asynchronous so browser and cloud adapters can use IndexedDB or a
+remote database without changing the evaluator. SQLite's transaction bodies
+remain synchronous; no transaction spans an awaited callback.
 
-## Checkpoints and effects
+## Checkpoints, deliveries and requests
 
-`src/runtime/persistence.ts` defines the portable boundary. A checkpoint pins a
-code identity and machine ABI, a monotonic revision, status, and JSON snapshot.
-The evaluator owns the snapshot schema. Lexical environments and closures use
-explicit identifiers inside that data instead of native JavaScript closures or
-object cycles. Values that JSON would silently omit or change are refused;
-special numeric values, including negative zero, need an explicit representation
-in the evaluator's value format.
+A checkpoint pins code and machine ABI, revision, JSON machine state and one
+canonical `waitingFor` reference. Closures and lexical environments use explicit
+identifiers, not native functions or object cycles. Nonportable values are
+rejected before writes, including JSON's silent transformations. Special numbers
+such as negative zero need an explicit evaluator representation.
 
-`commit(expected, change)` atomically saves a new checkpoint and its effect
-intents. Two workers starting from the same revision cannot both commit. A
-different code identity or machine ABI cannot replace the pinned definition,
-and a terminal execution cannot be resumed. Effects receive stable identities
-derived from the execution and committed revision; transport retries retain
-those identities.
+`commit` atomically saves a checkpoint, effect intents and newly issued requests.
+Two workers at the same revision cannot both commit. Terminal executions cannot
+resume. A terminal transition withdraws queued work and closes open requests;
+terminal notices remain deliverable. Already dispatched work cannot be undone by
+changing a database row.
 
-The dispatcher must commit an intent before sending anything. `beginDispatch`
-claims a pending intent. If the process dies after that claim, recovery observes
-`dispatching`, not a fresh pending action. It must reconcile the original request;
-`markUncertain` makes an unconfirmed outcome explicit. It must never invent a
-replacement request merely because an acknowledgement was lost.
+A **delivery** records whether an original message was delivered. A **request**
+independently records the current holder, assignment epoch and a single terminal
+outcome. Delivery acknowledgement never substitutes for a person's answer.
+`TimedOut` belongs to a wait and is not a terminal request outcome. Request
+outcomes are `Done`, `Declined`, `Failed`, `Cancelled` or `Revoked`.
 
-`recordResult` stores one result for the original effect. This is not an
-execution resumption or an authorization grant. The host must validate current
-authority, request epoch, reply schema and correlation; the evaluator must still
-commit its next checkpoint at the expected revision. A production host owns
-those decisions at its existing authority boundary. A lease or a dispatcher
-claim does not guarantee that a physical external action happened only once.
+`handOver` keeps the request ID, advances its epoch, withdraws an unsent old offer,
+notifies the previous holder and offers it to the next. Old holders cannot settle
+it. Settlement atomically records the result, withdraws queued offers and queues
+a terminal notice. This does not undo work a previous holder already performed.
 
-## Local durability and compatibility
+## Dispatch and recovery
 
-`SqliteStore` uses transactions for checkpoint/outbox changes and full synchronous
-commits. Concurrent processes serialize initialization and writes. Opening a
-connection does not change the database's journal mode: concurrent changes to
-WAL mode would introduce an initialization race unrelated to program execution.
-It opens only its own schema version, refuses nonempty unversioned databases,
-and requires an explicit migration for a newer storage version. It does not
-rewrite user data to recover an unsupported schema.
+Intent IDs survive retries. A dispatcher claims an intent with a lease and
+fencing epoch. An expired or explicitly uncertain claim is recovered in
+**reconcile** mode, never as permission to resend. `prepareRetry` requires host
+confirmation that the original ID is deduplicated or the previous attempt is
+proven unsent. That evidence comes from the host, not the passage of time. Without
+it the intent remains uncertain and visible. Retrying an obsolete request offer
+is refused even if the host supports deduplication.
 
-New on-disk database files are created with owner-only permissions. The caller
-must supply a private parent directory; existing files keep their permissions.
-Snapshots can contain private captured inputs and must not become public debug
-output. SQLite here supplies local durability, not encryption or a boundary
-between processes running as the same OS user.
+Lease fencing prevents obsolete workers from writing delivery state. It cannot
+stop a process that has already issued an external action. Hosts must check
+current authority, request assignment and reply schema at their own boundary;
+a local lease, a notification label or a stored response is not an authorization
+grant. Reconciliation may record an original delivery after cancellation, but
+cannot resume the terminated program or send new work for it.
 
-Focused checks run without third-party runtime dependencies:
+`scanEffects` discovers queued deliveries and expired claims. `scanReady`
+discovers runnable checkpoints, including suspended executions whose referenced
+delivery or request result was stored before a crash. Both support keyset
+pagination. The snapshot is resumed only by another revision-checked commit;
+recording an input alone never runs user code.
+
+## Local storage and compatibility
+
+SQLite uses full synchronous commits and serializes initialization and writes.
+Connection startup leaves journal mode unchanged to avoid a concurrent WAL-mode
+initialization race. Experimental schema version 2 refuses older/newer versions;
+it does not silently reinterpret snapshots or rewrite an unsupported store.
+
+New database files are owner-only. Supply a private parent directory; existing
+files retain their permissions. Snapshots may contain private captured inputs.
+The adapter provides local durability, not encryption or isolation from other
+processes running as the same OS user.
+
+Run the focused persistence checks with:
 
 ```sh
 node --experimental-strip-types --test test/runtime/store.test.ts
 ```
 
-They exercise JSON restart recovery, a process killed immediately after commit,
-competing workers, loss between dispatch and receipt, refusal of nonportable
-state, code/ABI fencing and unsupported database versions. Request settlement,
-time, permissions and actual language execution are covered by the evaluator
-and simulated-host integration as those components land.
+They cover restart and SIGKILL recovery, competing workers, cancellation,
+uncertain delivery, stale lease and request epochs, independent delivery/answer
+state, discovery after restart, atomic refusal of invalid data, pinned code/ABI
+and unsupported schema versions. Actual language execution and host permission
+integration require the evaluator and simulated-host checks; persistence checks
+alone do not establish language conformance.

@@ -1,7 +1,7 @@
-/** Portable persistence boundary. These values contain data, never native closures. */
+/** Portable data boundary. Native closures and host credentials never enter snapshots. */
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
-
 export type ExecutionStatus = "ready" | "suspended" | "completed" | "failed" | "cancelled" | "revoked";
+export type WaitFor = { kind: "delivery" | "request"; id: string };
 
 export interface Checkpoint {
   executionId: string;
@@ -10,49 +10,79 @@ export interface Checkpoint {
   machineVersion: string;
   status: ExecutionStatus;
   snapshot: Json;
+  waitingFor: WaitFor | null;
 }
-
-export type InitialCheckpoint = Omit<Checkpoint, "revision">;
-
+export type InitialCheckpoint = Omit<Checkpoint, "revision" | "waitingFor"> & { waitingFor?: WaitFor | null };
 export interface EffectDescription {
   operation: string;
   arguments: Json;
+  kind?: "work" | "notification";
 }
-
+export interface RequestDescription { holder: string; arguments: Json }
+/** Timeout is a result of waiting, never a terminal request outcome. */
+export type RequestOutcome =
+  | { tag: "Done"; value: Json }
+  | { tag: "Declined" | "Failed"; reason: string }
+  | { tag: "Cancelled" | "Revoked" };
+export interface StoredRequest extends RequestDescription {
+  id: string;
+  executionId: string;
+  epoch: number;
+  outcome: RequestOutcome | null;
+}
 export interface CheckpointChange {
   status: ExecutionStatus;
   snapshot: Json;
+  waitingFor?: WaitFor | null;
   effects?: EffectDescription[];
+  requests?: RequestDescription[];
 }
-
 export interface StoredEffect extends EffectDescription {
   id: string;
   executionId: string;
   revision: number;
   ordinal: number;
-  status: "pending" | "dispatching" | "uncertain" | "settled";
-  result: Json;
+  kind: "work" | "notification";
+  status: "pending" | "dispatching" | "uncertain" | "delivered" | "withdrawn";
+  receipt: Json;
   detail: string | null;
 }
-
-export interface Commit {
-  checkpoint: Checkpoint;
-  effects: StoredEffect[];
+export interface DispatchClaim {
+  effect: StoredEffect;
+  owner: string;
+  epoch: number;
+  until: number;
+  mode: "send" | "reconcile";
 }
+export type RetryEvidence = "host-deduplicates-original-id" | "previous-attempt-proven-unsent";
+export interface Scan { after?: string; limit?: number }
+export interface Commit { checkpoint: Checkpoint; effects: StoredEffect[]; requests: StoredRequest[] }
 
 /**
- * Hosts validate current authority and typed replies before recording results.
- * A recorded result is durable input; it does not itself resume an execution.
+ * Hosts validate current authority and reply schemas at their own boundary.
+ * Leases authorize storage updates, not physical external actions. Expiration only
+ * permits reconciliation; replay requires explicit host evidence for the same ID.
+ * All adapters are asynchronous, including the synchronous SQLite reference backend.
  */
 export interface DurableStore {
-  create(initial: InitialCheckpoint): boolean;
-  load(executionId: string): Checkpoint | null;
-  commit(expected: Checkpoint, change: CheckpointChange): Commit | null;
-  effects(executionId: string): StoredEffect[];
-  beginDispatch(effectId: string): boolean;
-  markUncertain(effectId: string, detail: string): boolean;
-  recordResult(effectId: string, result: Json): boolean;
-  close(): void;
+  create(initial: InitialCheckpoint): Promise<boolean>;
+  load(executionId: string): Promise<Checkpoint | null>;
+  commit(expected: Checkpoint, change: CheckpointChange): Promise<Commit | null>;
+  effects(executionId: string): Promise<StoredEffect[]>;
+  request(id: string): Promise<StoredRequest | null>;
+  settleRequest(id: string, epoch: number, holder: string, outcome: RequestOutcome): Promise<boolean>;
+  handOver(id: string, epoch: number, holder: string, nextHolder: string): Promise<StoredRequest | null>;
+  claimEffect(id: string, owner: string, now: number, leaseMs: number): Promise<DispatchClaim | null>;
+  prepareRetry(claim: DispatchClaim, evidence: RetryEvidence, now: number): Promise<DispatchClaim | null>;
+  markUncertain(claim: DispatchClaim, detail: string, now: number): Promise<boolean>;
+  recordDelivery(claim: DispatchClaim, receipt: Json, now: number): Promise<boolean>;
+  scanEffects(now: number, scan?: Scan): Promise<StoredEffect[]>;
+  scanReady(scan?: Scan): Promise<Checkpoint[]>;
+  close(): Promise<void>;
+}
+
+export function requestId(executionId: string, revision: number, ordinal = 0): string {
+  return `${effectId(executionId, revision, ordinal)}/request`;
 }
 
 /** Stable across retries of exactly the same committed transition. */
