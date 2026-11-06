@@ -5,19 +5,33 @@
 > Status: design draft. There is no implementation yet. The spec is open
 > for discussion: open an issue.
 
-Lun (轮, "turn": whose turn it is to carry the work forward) decides **who
-continues the work, and when**. It never does the work itself.
+Lun solves coordination **at the language level**. A team of people and AI
+agents has to settle several things:
 
-The units of a Lun program are autonomous participants: people, and complete
-AI agents of any kind. They are not model calls or tools. Every call to a
-participant is a *request*. They may answer late, decline, fail, or lose the
-authority to act, and the language makes a program handle each of these.
+- who is responsible for what;
+- who asks whom;
+- what depends on what;
+- what counts as done;
+- how the work carries on when something changes.
+
+Products usually answer each of these with a separate feature: reminders,
+schedules, approval cards, follow-ups. In Lun they are all just programs, much
+as SQL turned "how do I get this data" into a language. The language does not
+do the work itself; people and agents do. It describes how they get it done
+together.
+
+The participants are autonomous: people, and complete AI agents of any kind,
+not model calls or tools. Every call to a participant is a *request*. They may
+answer late, decline, fail, or lose the authority to act, and the language
+makes a program handle each case.
 
 ```rescript
-// Ask a person; if nobody answers by the deadline, carry out the recommendation.
-switch ask(@alice, "Ship the billing probe? A: ship / B: skip", ~until=2026-11-07T12:00Z) {
-| Done("B") => run(@auto, "Record the decision: skip the billing probe")
-| Done(_) | TimedOut => run(@auto, "Ship the billing probe as recommended: at most US$0.10")
+// Ask a person to choose; if nobody chooses by the deadline, the declared default applies.
+type probe = Ship | Skip
+
+switch ask(@alice, "Ship the billing probe?", ~options=[Ship, Skip], ~until=2026-11-07T12:00Z) {
+| Done(Skip) => run(@auto, "Record the decision: skip the billing probe")
+| Done(Ship) | TimedOut => run(@auto, "Ship the billing probe as recommended: at most US$0.10")
 | other => fail(other)
 }
 ```
@@ -43,9 +57,12 @@ every(1d)
 Teams of people and agents keep re-inventing the same few mechanisms:
 reminders, schedules, "waiting for your reply", subscriptions to pull
 requests, approval cards, "keep going until it's done". None of them says what
-happens when the awaited thing never comes. They are all the same thing:
-suspend, wait for something, then carry on. Lun makes that one primitive,
-and everything else is a library written in Lun.
+happens when the awaited thing never comes. Underneath, they are all the same
+relationship: someone asks, someone answers or doesn't, and the work goes on.
+
+Written as a language, these mechanisms compose. They can be read and
+reviewed like any other code, and their failure cases can be checked.
+Everything else becomes a library.
 
 ## Principles
 
@@ -56,9 +73,9 @@ and everything else is a library written in Lun.
 - **Programs, not graphs.** You write ordinary functional programs. The
   dependency graph is whatever the runtime can draw from where programs are
   waiting.
-- **Autonomy in the types.** `Done | Declined | Failed | TimedOut | Cancelled |
-  Revoked`. A request and a wait are separate things, so a timeout never
-  quietly turns into duplicated work.
+- **Autonomy in the types.** Outcomes are `Done | Declined | Failed |
+  TimedOut | Cancelled | Revoked`. A request and a wait are separate things,
+  so a timeout never quietly turns into a second request.
 - **Capabilities, not restrictions.** Lun is Turing complete. A program touches
   the world only through a handful of effects, and real actions such as
   spending, mailing or deploying happen inside agent runs, under their own

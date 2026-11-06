@@ -8,13 +8,21 @@
 
 ## 1. What Lun is
 
-Lun decides **who continues the work, and when**. It never does the work
-itself.
+Lun solves coordination at the language level. It describes how a group of
+autonomous people and AI agents get something done together:
 
-Its units are autonomous participants: people, and complete AI agents of any
-kind. They are not model calls or tools. Every call to a participant is a
-*request* to someone who decides how to do the work. They may answer late,
-decline, fail, or lose the authority to act.
+- who is responsible for what;
+- who asks whom;
+- what depends on what;
+- what counts as done;
+- how the work carries on when circumstances change.
+
+Lun does not do the work itself; the participants do.
+
+Its participants are people, and complete AI agents of any kind. They are not
+model calls or tools. Every call to a participant is a *request* to someone
+who decides how to do the work. They may answer late, decline, fail, or lose
+the authority to act.
 
 That places Lun one level above agent frameworks such as LangGraph, whose
 nodes are model calls and functions inside one agent. It is also
@@ -45,10 +53,11 @@ the cost:
 - About 24 agent launches failed without anyone being told.
 - 13 daily schedules woke on a timer only to ask whether anything had changed.
 
-Each case is suspended work that went wrong. It was leaked, had nobody to
-handle it, was woken by a timer instead of by its event, or was dropped on
-failure. Lun makes "suspend, wait for something, then carry on" the one
-primitive. Everything else is a library written in Lun.
+Each case is the same relationship gone wrong: someone asks, someone answers
+or doesn't, and the work goes on. A request was leaked, had nobody to handle
+it, was woken by a timer instead of by its event, or was dropped on failure.
+Lun expresses that relationship in a language. Each of the features above
+becomes a short program, and the standard library is written in Lun itself.
 
 ## 2. Design principles
 
@@ -72,10 +81,13 @@ primitive. Everything else is a library written in Lun.
 ## 3. A first look
 
 ```lun
-// A decision with a default. The recommendation is written into the program.
-switch ask(@alice, "Ship the billing probe? A: ship / B: skip", ~until=2026-11-07T12:00Z) {
-| Done("B") => run(@auto, "Record the decision: skip the billing probe")
-| Done(_) | TimedOut => run(@auto, "Ship the billing probe as recommended: at most US$0.10")
+// A decision with a declared default. The options are a type, so an answer
+// the host cannot map to an option is never taken as consent.
+type probe = Ship | Skip
+
+switch ask(@alice, "Ship the billing probe?", ~options=[Ship, Skip], ~until=2026-11-07T12:00Z) {
+| Done(Skip) => run(@auto, "Record the decision: skip the billing probe")
+| Done(Ship) | TimedOut => run(@auto, "Ship the billing probe as recommended: at most US$0.10")
 | other => fail(other)
 }
 ```
@@ -99,8 +111,9 @@ every(1d)
 ```
 
 ```lun
-// A follow-up that hands the same request from an agent to a person,
-// so only one of them ever works on it.
+// A follow-up that hands the same request over from an agent to a person.
+// Handing over moves who continues; it does not undo what the agent may
+// already have done, which the host still reconciles.
 let q = request(@codex, "Is the build machine still overheating?")
 switch q->wait(~until=1h) {
 | Done(answer) => say(@alice, answer)
@@ -193,7 +206,7 @@ the program's author, and is authorized at the moment it is performed (§10).
 
 | Built-in | Waits? | Meaning |
 |---|---|---|
-| `ask(who, text, ~options=?, ~until=?) : outcome<string>` | yes | Asks a person or an agent, and waits for the answer. The host shows the request to `who`, with who is waiting and until when. |
+| `ask(who, text, ~options=?, ~until=?) : outcome<'a>` | yes | Asks a person or an agent, and waits for the answer. The host shows the request to `who`, with who is waiting and until when. With `~options` (values of a variant type), the answer is one of them; an answer the host cannot map becomes `Declined`, never a choice. Without options, the answer is a `string`. |
 | `run(who, task, ~context=?, ~until=?) : outcome<report>` | yes | Starts a run of `who` on `task`, written in natural language, and waits for its final report. What `report` contains is host-defined: text, changes made, evidence. |
 | `request(who, text)`, `start(who, task) : request<'a>` | no | The same two calls, returning a handle instead of waiting. |
 | `wait(x, ~until=?) : outcome<'a>` | yes | Waits for a request, an event or a stream (§6.2). |
@@ -263,10 +276,10 @@ let remind = (who, text, ~at) => {
   ask(who, text)
 }
 
-let decide = (who, question, ~recommend, ~until) =>
-  switch ask(who, `${question}\nRecommended: ${recommend}. No answer by ${until->show} means the recommendation.`, ~until) {
+let decide = (who, question, ~options, ~recommend, ~until) =>
+  switch ask(who, `${question}\nRecommended: ${recommend->show}. No answer by ${until->show} means the recommendation.`, ~options, ~until) {
   | Done(choice) => choice
-  | TimedOut => recommend
+  | TimedOut => recommend            // the declared default, and only on timeout
   | other => fail(other)
   }
 
