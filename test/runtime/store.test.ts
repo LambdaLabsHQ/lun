@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -188,4 +188,15 @@ test("an unsupported database is refused without rewriting its schema version", 
   const check = new DatabaseSync(path);
   assert.equal(check.prepare("PRAGMA user_version").get()!.user_version, 99);
   check.close();
+});
+
+test("a new on-disk snapshot database is private to its OS user", { skip: process.platform === "win32" }, (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "norn-private-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, "runtime.sqlite");
+  const store = new SqliteStore(path);
+  try {
+    store.create({ ...initial, snapshot: { privateMessage: "synthetic captured input" } });
+    assert.equal(statSync(path).mode & 0o777, 0o600);
+  } finally { store.close(); }
 });

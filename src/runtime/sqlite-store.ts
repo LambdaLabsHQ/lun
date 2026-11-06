@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { closeSync, openSync } from "node:fs";
 import {
   effectId,
   encodeJson,
@@ -47,6 +48,14 @@ export class SqliteStore implements DurableStore {
   private closed = false;
 
   constructor(path: string) {
+    if (path !== ":memory:") {
+      try {
+        const descriptor = openSync(path, "wx", 0o600);
+        closeSync(descriptor);
+      } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+      }
+    }
     this.db = new DatabaseSync(path);
     try {
       this.db.exec("PRAGMA busy_timeout = 5000");

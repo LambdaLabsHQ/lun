@@ -46,6 +46,12 @@ It opens only its own schema version, refuses nonempty unversioned databases,
 and requires an explicit migration for a newer storage version. It does not
 rewrite user data to recover an unsupported schema.
 
+New on-disk database files are created with owner-only permissions. The caller
+must supply a private parent directory; existing files keep their permissions.
+Snapshots can contain private captured inputs and must not become public debug
+output. SQLite here supplies local durability, not encryption or a boundary
+between processes running as the same OS user.
+
 Focused checks run without third-party runtime dependencies:
 
 ```sh
