@@ -1,7 +1,7 @@
 /** Portable data boundary. Native closures and host credentials never enter snapshots. */
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type ExecutionStatus = "ready" | "suspended" | "completed" | "failed" | "cancelled" | "revoked";
-export type WaitFor = { kind: "delivery" | "request"; id: string };
+export type WaitFor = { kind: "delivery" | "request" | "wait"; id: string };
 
 export interface Checkpoint {
   executionId: string;
@@ -29,13 +29,35 @@ export interface StoredRequest extends RequestDescription {
   executionId: string;
   epoch: number;
   outcome: RequestOutcome | null;
+  settledAt: number | null;
 }
+export type WaitTarget =
+  | { kind: "request"; id: string }
+  | { kind: "event"; key: string; mode: "fact" | "stream" }
+  | { kind: "timer"; at: number };
+export type WaitOutcome = RequestOutcome | { tag: "TimedOut" };
+export interface WaitDescription {
+  targets: WaitTarget[];
+  until: number | null;
+  withdrawOnTimeout: string[];
+}
+export interface StoredWait extends WaitDescription {
+  id: string;
+  executionId: string;
+  cursor: number;
+  outcome: WaitOutcome | null;
+}
+export type RequestAction = { id: string; epoch: number; holder: string } &
+  ({ action: "cancel" } | { action: "handOver"; nextHolder: string });
 export interface CheckpointChange {
   status: ExecutionStatus;
   snapshot: Json;
   waitingFor?: WaitFor | null;
   effects?: EffectDescription[];
   requests?: RequestDescription[];
+  waits?: WaitDescription[];
+  requestActions?: RequestAction[];
+  now?: number;
 }
 export interface StoredEffect extends EffectDescription {
   id: string;
@@ -43,7 +65,7 @@ export interface StoredEffect extends EffectDescription {
   revision: number;
   ordinal: number;
   kind: "work" | "notification";
-  status: "pending" | "dispatching" | "uncertain" | "delivered" | "withdrawn";
+  status: "pending" | "dispatching" | "uncertain" | "blocked" | "delivered" | "withdrawn" | "superseded";
   receipt: Json;
   detail: string | null;
 }
@@ -54,9 +76,9 @@ export interface DispatchClaim {
   until: number;
   mode: "send" | "reconcile";
 }
-export type RetryEvidence = "host-deduplicates-original-id" | "previous-attempt-proven-unsent";
+export type RetryEvidence = "host-deduplicates-original-id" | "previous-sender-fenced-and-host-confirmed-absent";
 export interface Scan { after?: string; limit?: number }
-export interface Commit { checkpoint: Checkpoint; effects: StoredEffect[]; requests: StoredRequest[] }
+export interface Commit { checkpoint: Checkpoint; effects: StoredEffect[]; requests: StoredRequest[]; waits: StoredWait[] }
 
 /**
  * Hosts validate current authority and reply schemas at their own boundary.
@@ -70,19 +92,26 @@ export interface DurableStore {
   commit(expected: Checkpoint, change: CheckpointChange): Promise<Commit | null>;
   effects(executionId: string): Promise<StoredEffect[]>;
   request(id: string): Promise<StoredRequest | null>;
-  settleRequest(id: string, epoch: number, holder: string, outcome: RequestOutcome): Promise<boolean>;
+  settleRequest(id: string, epoch: number, holder: string, outcome: RequestOutcome, at?: number): Promise<boolean>;
+  wait(id: string): Promise<StoredWait | null>;
+  publishEvent(id: string, key: string, mode: "fact" | "stream", value: Json, at: number, originExecutionId?: string): Promise<boolean>;
   handOver(id: string, epoch: number, holder: string, nextHolder: string): Promise<StoredRequest | null>;
   claimEffect(id: string, owner: string, now: number, leaseMs: number): Promise<DispatchClaim | null>;
+  provideEvidence(id: string, detail: string): Promise<boolean>;
   prepareRetry(claim: DispatchClaim, evidence: RetryEvidence, now: number): Promise<DispatchClaim | null>;
   markUncertain(claim: DispatchClaim, detail: string, now: number): Promise<boolean>;
   recordDelivery(claim: DispatchClaim, receipt: Json, now: number): Promise<boolean>;
   scanEffects(now: number, scan?: Scan): Promise<StoredEffect[]>;
-  scanReady(scan?: Scan): Promise<Checkpoint[]>;
+  scanReady(now?: number, scan?: Scan): Promise<Checkpoint[]>;
   close(): Promise<void>;
 }
 
 export function requestId(executionId: string, revision: number, ordinal = 0): string {
   return `${effectId(executionId, revision, ordinal)}/request`;
+}
+
+export function waitId(executionId: string, revision: number, ordinal = 0): string {
+  return `${effectId(executionId, revision, ordinal)}/wait`;
 }
 
 /** Stable across retries of exactly the same committed transition. */

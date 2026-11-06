@@ -36,8 +36,8 @@ a terminal notice. This does not undo work a previous holder already performed.
 Intent IDs survive retries. A dispatcher claims an intent with a lease and
 fencing epoch. An expired or explicitly uncertain claim is recovered in
 **reconcile** mode, never as permission to resend. `prepareRetry` requires host
-confirmation that the original ID is deduplicated or the previous attempt is
-proven unsent. That evidence comes from the host, not the passage of time. Without
+confirmation that the original ID is deduplicated or the previous sender is fenced and a subsequent host query confirms it never
+received that ID. That evidence comes from the host, not the passage of time. Without
 it the intent remains uncertain and visible. Retrying an obsolete request offer
 is refused even if the host supports deduplication.
 
@@ -48,7 +48,20 @@ a local lease, a notification label or a stored response is not an authorization
 grant. Reconciliation may record an original delivery after cancellation, but
 cannot resume the terminated program or send new work for it.
 
-`scanEffects` discovers queued deliveries and expired claims. `scanReady`
+A failed reconciliation parks the intent as `blocked`, outside executable
+scans. Only `provideEvidence` makes it eligible for another reconciliation.
+Obsolete unconfirmed request offers become `superseded`; release/closure notices
+remain deliverable, and no worker keeps reclaiming the old offer.
+
+A wait persists its target set, deadline, event cursor and terminal outcome.
+The target set may include requests, external facts/occurrences and timers.
+Observing an existing fact and recording a stream cursor happen in the same
+transaction as registration. Self-caused events are ignored. Deadlines are
+exclusive: an answer at the deadline loses to timeout. An `ask`-style timeout
+withdraws its request; an explicit handle wait leaves it open. Late inputs cannot
+overwrite a stored wait outcome.
+
+`scanEffects` discovers queued deliveries and expired claims. `scanReady(now)`
 discovers runnable checkpoints, including suspended executions whose referenced
 delivery or request result was stored before a crash. Both support keyset
 pagination. The snapshot is resumed only by another revision-checked commit;
@@ -58,7 +71,7 @@ recording an input alone never runs user code.
 
 SQLite uses full synchronous commits and serializes initialization and writes.
 Connection startup leaves journal mode unchanged to avoid a concurrent WAL-mode
-initialization race. Experimental schema version 2 refuses older/newer versions;
+initialization race. Experimental schema version 3 refuses older/newer versions;
 it does not silently reinterpret snapshots or rewrite an unsupported store.
 
 New database files are owner-only. Supply a private parent directory; existing

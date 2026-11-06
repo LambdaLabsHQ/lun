@@ -149,6 +149,9 @@ test("unknown delivery remains recoverable without manufacturing success", async
   const { effects: [effect] } = await pending(store);
   const claim = (await store.claimEffect(effect.id, "a", 0, 10))!;
   assert.equal(await store.markUncertain(claim, "no transport acknowledgement", 1), true);
+  assert.deepEqual(await store.scanEffects(2), []);
+  assert.equal(await store.claimEffect(effect.id, "b", 2, 10), null);
+  assert.equal(await store.provideEvidence(effect.id, "host lookup now available"), true);
   const reconcile = (await store.claimEffect(effect.id, "b", 2, 10))!;
   assert.equal(reconcile.mode, "reconcile");
   assert.equal((await store.effects(initial.executionId))[0].receipt, null);
@@ -197,11 +200,11 @@ test("handover fences resending an old offer even when its host supports dedupli
   const { requests: [request], effects: [offer] } = await requested(store);
   const sending = (await store.claimEffect(offer.id, "old-worker", 0, 10))!;
   await store.handOver(request.id, 0, "alice", "bob");
-  const reconcile = (await store.claimEffect(offer.id, "new-worker", 10, 10))!;
-  assert.equal(reconcile.mode, "reconcile");
-  assert.equal(await store.prepareRetry(reconcile, "host-deduplicates-original-id", 11), null);
+  assert.equal(await store.claimEffect(offer.id, "new-worker", 10, 10), null);
+  assert.equal((await store.effects(initial.executionId)).find(e => e.id === offer.id)!.status, "superseded");
+  assert.ok((await store.scanEffects(10)).every(e => e.id !== offer.id));
+  assert.equal(await store.prepareRetry(sending, "host-deduplicates-original-id", 11), null);
   assert.equal(await store.recordDelivery(sending, "late old acknowledgement", 11), false);
-  assert.equal(await store.recordDelivery(reconcile, "old offer was delivered", 11), true);
   assert.equal((await store.request(request.id))!.holder, "bob");
 });
 
@@ -215,9 +218,9 @@ test("recovery discovers ready programs and effects with keyset pagination", asy
     const claim = (await store.claimEffect(effect.id, "sender", 0, 10))!;
     await store.recordDelivery(claim, "delivered", 1);
   }
-  const ready = await store.scanReady({ limit: 2 });
+  const ready = await store.scanReady(0, { limit: 2 });
   assert.deepEqual(ready.map(e => e.executionId), ["a", "b"]);
-  assert.deepEqual((await store.scanReady({ after: ready[1].executionId })).map(e => e.executionId), ["c"]);
+  assert.deepEqual((await store.scanReady(0, { after: ready[1].executionId })).map(e => e.executionId), ["c"]);
 });
 
 test("nonportable data and invalid wait dependencies cannot partially commit", async (t) => {
