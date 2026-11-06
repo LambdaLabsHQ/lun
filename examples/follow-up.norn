@@ -2,8 +2,8 @@
 // Handing over moves who continues; it does not undo what the agent may
 // already have done, which the host still reconciles.
 let q = request(@codex, "Is the build machine still overheating?")
-switch q->wait(~until=1h) {
-| Done(answer) => say(@alice, answer)
+let reply = switch q->wait(~until=1h) {
 | TimedOut => q->handOver(@alice)->wait
-| other => fail(other)
+| other => other
 }
+say(doc"ops#machines", reply?)

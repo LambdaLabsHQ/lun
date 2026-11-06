@@ -20,14 +20,8 @@ let followUp = (who, text, ~until, ~escalateTo) => {
   }
 }
 
-let rec mergeAll = (stream, others) =>
-  switch others {
-  | [] => stream
-  | [next, ...rest] => stream->merge(next)->mergeAll(rest)
-  }
-
-let schedule = (~every as period, ~on=[], task) =>
-  every(period)->mergeAll(on)->forEach(_ => run(@auto, task))
+let schedule = (~every as period, ~on=never(), task) =>
+  every(period)->or(on)->forEach(_ => run(@auto, task))
 
 let digest = (who, ~every as period) =>
   schedule(~every=period, `Tell ${who->show} what changed since they last looked; say nothing if nothing changed`)

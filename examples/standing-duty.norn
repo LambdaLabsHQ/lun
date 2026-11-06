@@ -1,4 +1,4 @@
 // A standing duty.
 every(1d)
-->merge(ciFailed("acme/api"))
+->or(ciFailed("acme/api"))
 ->forEach(_ => run(@auto, "Check production health and fix the riskiest issue"))
