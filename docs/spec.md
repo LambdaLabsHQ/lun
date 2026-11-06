@@ -359,7 +359,10 @@ observable behaviour either way.
 - **Naming is not granting.** Passing `@alice` to another program does not let
   that program act as Alice.
 - **Failures surface.** A program that ends without success is reported to its
-  author as a request. A failure is never silence.
+  author as a request. A failure is never silence. A program whose last
+  expression is an outcome other than `Done` has ended without success, and
+  the type checker refuses to let an outcome be dropped silently
+  ([types](types.md) §6a).
 - **Pure computation between waits is time-sliced** and charged to the
   author. A loop that never waits is a bug in that program, not a reason for a
   language-wide cap.

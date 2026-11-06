@@ -4,8 +4,10 @@
 > the two disagree, this document is newer.
 
 Agents will write most Norn, and people will review it. The type checker
-serves both. It asks for no annotations. Its main job is to make a program
-handle every case of every result, above all every `outcome`. When it rejects
+serves both. It asks for no annotations. Its main job is to make sure no
+`outcome` is lost. Every outcome is inspected with `switch` and all of its
+cases, propagated with `?`, ended with `fail`, returned, or set aside with
+`ignore` in the program text. When it rejects
 a program, it says where, what it expected and what it found, in words a model
 can act on.
 
@@ -150,6 +152,26 @@ Notes:
 - **A case that can never match** is a warning.
 - **`let` patterns must always match**: tuples, records, variables and `_`. To
   take apart an `outcome`, use `?` or `switch`.
+
+## 6a. Outcomes are not dropped
+
+Covering every case of a `switch` is not enough: `let _ = ask(…)` would still
+drop an answer. An outcome must not be dropped silently. Three cases are
+errors:
+
+- an expression of type `outcome<_>` used as a statement that is not the last
+  in its block;
+- `let _ = e`, where `e : outcome<_>`;
+- a `let` that binds an `outcome<_>`, in whole or as part of a pattern, to a
+  name that is never used.
+
+The message says what to do instead: handle it with `switch`, `?` or `fail`,
+or write `ignore(e)` to drop it on purpose.
+
+**A program's own result follows the same rule.** If its last expression is
+an outcome other than `Done`, the program fails with that outcome, exactly as
+if it had called `fail`. The author is told (spec §10). So a program that ends
+with `run(…)` reports the run's failure; it does not complete quietly.
 
 ## 7. Host interfaces
 
