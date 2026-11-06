@@ -67,7 +67,7 @@ export function analyzeMatch(type: Type, rows: readonly Row[], table: TypeTable)
     }
     if (!row.guarded) before.push([pat]);
   }
-  const missing = space.missing(before, [type]).map((witness) => show(witness[0]!));
+  const missing = space.missing(before, [type]).map((witness) => show(witness!.head));
   return { missing, unreachable };
 }
 
@@ -181,34 +181,66 @@ class Space {
     }
   }
 
-  /** Whether some value matches `q` and no row of `matrix`. */
+  /**
+   * Whether some value matches `q` and no row of `matrix`. A constructor in
+   * `q`, and a column whose constructors do not cover its type, continue in
+   * the loop rather than recursing, so a wide tuple or a long list pattern
+   * does not use stack for each of its columns.
+   */
   useful(matrix: readonly (readonly Pat[])[], q: readonly Pat[], types: readonly Type[]): boolean {
-    if (q.length === 0) return matrix.length === 0;
-    const [head, ...rest] = q as [Pat, ...Pat[]];
-    const [type, ...restTypes] = types as [Type, ...Type[]];
-    if (head.tag === "or") return head.alternatives.some((alternative) => this.useful(matrix, [alternative, ...rest], types));
-    if (head.tag === "ctor") {
-      return this.useful(specialize(matrix, head.ctor), [...head.args, ...rest], [...this.argumentTypes(head.ctor, type), ...restTypes]);
+    for (;;) {
+      if (matrix.length === 0) return true;
+      if (q.length === 0 || matrix.some(coversAll)) return false;
+      const [head, ...rest] = q as [Pat, ...Pat[]];
+      const [type, ...restTypes] = types as [Type, ...Type[]];
+      if (head.tag === "or") return head.alternatives.some((alternative) => this.useful(matrix, [alternative, ...rest], types));
+      if (head.tag === "ctor") {
+        matrix = specialize(matrix, head.ctor);
+        q = [...head.args, ...rest];
+        types = [...this.argumentTypes(head.ctor, type), ...restTypes];
+        continue;
+      }
+      const present = headCtors(matrix);
+      const signature = this.signature(type);
+      if (signature !== null && signature.every((ctor) => present.has(ctor.key))) {
+        if (signature.length === 1) {
+          const ctor = signature[0]!;
+          matrix = specialize(matrix, ctor);
+          q = [...anys(ctor.arity), ...rest];
+          types = [...this.argumentTypes(ctor, type), ...restTypes];
+          continue;
+        }
+        return signature.some((ctor) =>
+          this.useful(specialize(matrix, ctor), [...anys(ctor.arity), ...rest], [...this.argumentTypes(ctor, type), ...restTypes]));
+      }
+      matrix = defaults(matrix);
+      q = rest;
+      types = restTypes;
     }
-    const present = headCtors(matrix);
-    const signature = this.signature(type);
-    if (signature !== null && signature.every((ctor) => present.has(ctor.key))) {
-      return signature.some((ctor) =>
-        this.useful(specialize(matrix, ctor), [...anys(ctor.arity), ...rest], [...this.argumentTypes(ctor, type), ...restTypes]));
-    }
-    return this.useful(defaults(matrix), rest, restTypes);
   }
 
-  /** Every value vector, as patterns, that no row of `matrix` matches. */
-  missing(matrix: readonly (readonly Pat[])[], types: readonly Type[]): Pat[][] {
-    if (types.length === 0) return matrix.length === 0 ? [[]] : [];
+  /**
+   * Every value vector, as patterns, that no row of `matrix` matches. A
+   * vector is a linked list, so that putting a constructor in front of each
+   * of many witnesses does not copy them.
+   */
+  missing(matrix: readonly (readonly Pat[])[], types: readonly Type[]): Vector[] {
+    // No row: any value is missing. A row of wildcards: none is.
+    if (matrix.length === 0) return [anyVector(types.length)];
+    if (matrix.some(coversAll)) return [];
     const [type, ...restTypes] = types as [Type, ...Type[]];
     const present = headCtors(matrix);
     const signature = this.signature(type);
-    const witnesses: Pat[][] = [];
+    const witnesses: Vector[] = [];
     const explore = (ctor: Ctor) => {
       for (const witness of this.missing(specialize(matrix, ctor), [...this.argumentTypes(ctor, type), ...restTypes])) {
-        witnesses.push([{ tag: "ctor", ctor, args: witness.slice(0, ctor.arity) }, ...witness.slice(ctor.arity)]);
+        const args: Pat[] = [];
+        let rest: Vector = witness;
+        for (let index = 0; index < ctor.arity; index += 1) {
+          args.push(rest!.head);
+          rest = rest!.tail;
+        }
+        witnesses.push({ head: { tag: "ctor", ctor, args }, tail: rest });
       }
     };
     if (signature !== null && signature.every((ctor) => present.has(ctor.key))) {
@@ -221,15 +253,24 @@ class Space {
       // In the order of the type's constructors: those that appear, explored, and those that do not, with any arguments.
       for (const ctor of signature) {
         if (present.has(ctor.key)) explore(ctor);
-        else for (const witness of others) witnesses.push([{ tag: "ctor", ctor, args: anys(ctor.arity) }, ...witness]);
+        else for (const witness of others) witnesses.push({ head: { tag: "ctor", ctor, args: anys(ctor.arity) }, tail: witness });
       }
       return witnesses;
     }
     // No finite set of constructors, or none appears: the constructors that do, then any other value.
     for (const ctor of present.values()) explore(ctor);
-    for (const witness of others) witnesses.push([ANY, ...witness]);
+    for (const witness of others) witnesses.push({ head: ANY, tail: witness });
     return witnesses;
   }
+}
+
+/** A vector of patterns as a linked list; null is the empty vector. */
+type Vector = { readonly head: Pat; readonly tail: Vector } | null;
+
+function anyVector(length: number): Vector {
+  let vector: Vector = null;
+  for (let index = 0; index < length; index += 1) vector = { head: ANY, tail: vector };
+  return vector;
 }
 
 const NIL: Ctor = { key: "#nil", arity: 0, kind: "nil", text: "[]", fields: [] };
@@ -255,6 +296,11 @@ function literalCtor(node: A.LiteralPattern["literal"]): Ctor {
     case "UnitLiteral":
       return literal("#unit", "()");
   }
+}
+
+/** A row that matches every value: wildcards only. */
+function coversAll(row: readonly Pat[]): boolean {
+  return row.every((pat) => pat.tag === "any");
 }
 
 function anys(count: number): Pat[] {

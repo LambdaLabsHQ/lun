@@ -22,6 +22,14 @@ test("chains of 10,000 links check: pipes, calls, operators, ? and else if", () 
   ok(`let wrap = x => [x]\nlet y = 0${"->wrap".repeat(10_000)}`);
 });
 
+test("patterns 10,000 wide check: a tuple, a list, and the redundancy of a case after them", () => {
+  const ones = Array(10_000).fill("1").join(", ");
+  ok(`switch (${ones}) {\n| (${ones}) => 0\n| _ => 1\n}`);
+  ok(`switch [${ones}] {\n| [${ones}] => 0\n| _ => 1\n}`);
+  const result = check(`switch (${ones}) {\n| _ => 0\n| (${ones}) => 1\n}`);
+  assert.deepEqual(result.diagnostics.map((d) => d.code), ["unreachable-case"]);
+});
+
 test("10,000 cases and 10,000 statements check", () => {
   const cases = Array.from({ length: 10_000 }, (_, index) => `| "${index}" => ${index}`).join("\n");
   ok(`let n = switch "x" {\n${cases}\n| _ => 0\n}`);
