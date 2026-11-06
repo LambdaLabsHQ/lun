@@ -1,4 +1,4 @@
-# Lun language spec (draft v0)
+# Norn language spec (draft v0)
 
 > Status: design draft, 2026-11-06. Nothing here is implemented, and
 > everything is open to change. The language sections were drafted by Claude.
@@ -8,9 +8,9 @@
 > [choreographies](research/choreographies.md)). The project was started at
 > [Lambda Labs](https://github.com/LambdaLabsHQ).
 
-## 1. What Lun is
+## 1. What Norn is
 
-Lun solves coordination at the language level. It describes how a group of
+Norn solves coordination at the language level. It describes how a group of
 autonomous people and AI agents get something done together:
 
 - who is responsible for what;
@@ -19,14 +19,14 @@ autonomous people and AI agents get something done together:
 - what counts as done;
 - how the work carries on when circumstances change.
 
-Lun does not do the work itself; the participants do.
+Norn does not do the work itself; the participants do.
 
 Its participants are people, and complete AI agents of any kind. They are not
 model calls or tools. Every call to a participant is a *request* to someone
 who decides how to do the work. They may answer late, decline, fail, or lose
 the authority to act.
 
-That places Lun one level above agent frameworks such as LangGraph, whose
+That places Norn one level above agent frameworks such as LangGraph, whose
 nodes are model calls and functions inside one agent. It is also
 *choreography, not orchestration*: there is no central conductor. Each
 program belongs to a person, an agent or a document section, and waits on
@@ -48,7 +48,7 @@ later:
 Products usually build each of these as its own feature. None of them says
 what happens when the awaited thing never comes.
 
-In the workspace where Lun was conceived, ten days of production data showed
+In the workspace where Norn was conceived, ten days of production data showed
 the cost:
 
 - 36 of 44 decisions that were waiting on a person closed silently by default.
@@ -58,8 +58,8 @@ the cost:
 Each case is the same relationship gone wrong: someone asks, someone answers
 or doesn't, and the work goes on. A request was leaked, had nobody to handle
 it, was woken by a timer instead of by its event, or was dropped on failure.
-Lun expresses that relationship in a language. Each of the features above
-becomes a short program, and the standard library is written in Lun itself.
+Norn expresses that relationship in a language. Each of the features above
+becomes a short program, and the standard library is written in Norn itself.
 
 ## 2. Design principles
 
@@ -82,7 +82,7 @@ becomes a short program, and the standard library is written in Lun itself.
 
 ## 3. A first look
 
-```lun
+```norn
 // A decision with a declared default. The options are a type, so an answer
 // the host cannot map to an option is never taken as consent.
 type probe = Ship | Skip
@@ -94,7 +94,7 @@ switch ask(@alice, "Ship the billing probe?", ~options=[Ship, Skip], ~until=2026
 }
 ```
 
-```lun
+```norn
 // A chain of facts in the world, then an agent.
 let pr = merged("acme/api#1436")->wait?
 switch released(Beta, ~containing=pr)->wait(~until=1d) {
@@ -105,14 +105,14 @@ switch released(Beta, ~containing=pr)->wait(~until=1d) {
 }
 ```
 
-```lun
+```norn
 // A standing duty.
 every(1d)
 ->merge(ciFailed("acme/api"))
 ->forEach(_ => run(@auto, "Check production health and fix the riskiest issue"))
 ```
 
-```lun
+```norn
 // A follow-up that hands the same request over from an agent to a person.
 // Handing over moves who continues; it does not undo what the agent may
 // already have done, which the host still reconciles.
@@ -124,7 +124,7 @@ switch q->wait(~until=1h) {
 }
 ```
 
-```lun
+```norn
 // Keep going until a judged condition holds.
 let rec push = () => {
   let report = run(@claude, "Move #1439 forward until it is merged and verified live")?
@@ -178,7 +178,7 @@ guarantees instead (§10, §11):
 
 ## 5. Syntax
 
-Lun is a subset of ReScript with a few additions.
+Norn is a subset of ReScript with a few additions. Source files use the `.norn` extension.
 
 - **Bindings and functions:** `let x = …`, `let f = (a, ~b, ~c=default) => …`,
   `let rec`. Blocks return their last expression. Pipe with `->`.
@@ -255,7 +255,7 @@ program. That is the guard against loops, and it needs no count limit.
 
 ## 7. Where programs live
 
-A program lives next to what it keeps true. In xMatrix that is a `lun` block in
+A program lives next to what it keeps true. In xMatrix that is a `norn` block in
 a Page section or a message.
 
 - **Starting is explicit.** A program starts through a host's admission step,
@@ -266,14 +266,14 @@ a Page section or a message.
   recommendation".
 - **The participant being waited on sees the same request.** They can answer
   it, decline it, or give an ETA, which moves the deadline.
-- **Shared functions live in a standard library** written in Lun and opened
+- **Shared functions live in a standard library** written in Norn and opened
   with `open Std`.
 
-## 8. The standard library, in Lun
+## 8. The standard library, in Norn
 
 Higher-level features are functions, not product features:
 
-```lun
+```norn
 let remind = (who, text, ~at) => {
   at->sleepUntil?
   ask(who, text)
@@ -480,7 +480,7 @@ projection and execution assumptions. Those guarantees do not automatically
 apply to this language's external participants. Only the program's own role runs
 code: people, agents and external systems cannot run projected programs.
 Timeouts, refusal, revocation, handover and durable waits are still research
-topics there. Lun therefore keeps the effects core and borrows the
+topics there. Norn therefore keeps the effects core and borrows the
 choreographic view:
 
 - each participant's card, prompt and reply schema is generated from the
@@ -510,7 +510,6 @@ from projection.
    - Time literals.
    - `?` on nested outcomes.
    - Which `forEach` policy is the default.
-   - The file extension.
 
 ## 14. Non-goals
 

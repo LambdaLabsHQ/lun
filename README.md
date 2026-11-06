@@ -1,11 +1,11 @@
-# Lun
+# Norn
 
 **The coordination language for teams of people and AI agents.**
 
 > Status: design draft. There is no implementation yet. The spec is open
 > for discussion: open an issue.
 
-Lun solves coordination **at the language level**. A team of people and AI
+Norn solves coordination **at the language level**. A team of people and AI
 agents has to settle several things:
 
 - who is responsible for what;
@@ -15,7 +15,7 @@ agents has to settle several things:
 - how the work carries on when something changes.
 
 Products usually answer each of these with a separate feature: reminders,
-schedules, approval cards, follow-ups. In Lun they are all just programs, much
+schedules, approval cards, follow-ups. In Norn they are all just programs, much
 as SQL turned "how do I get this data" into a language. The language does not
 do the work itself; people and agents do. It describes how they get it done
 together.
@@ -68,7 +68,7 @@ Everything else becomes a library.
 
 - **Coordination, not orchestration.** There is no central conductor. Each
   program belongs to a person, an agent or a document, and waits on others the
-  way a team member does. Lun sits one level above agent frameworks: how an
+  way a team member does. Norn sits one level above agent frameworks: how an
   agent thinks is the agent's business.
 - **Programs, not graphs.** You write ordinary functional programs. The
   dependency graph is whatever the runtime can draw from where programs are
@@ -76,7 +76,7 @@ Everything else becomes a library.
 - **Autonomy in the types.** Outcomes are `Done | Declined | Failed |
   TimedOut | Cancelled | Revoked`. A request and a wait are separate things,
   so a timeout never quietly turns into a second request.
-- **Capabilities, not restrictions.** Lun is Turing complete. A program touches
+- **Capabilities, not restrictions.** Norn is Turing complete. A program touches
   the world only through a handful of effects, and real actions such as
   spending, mailing or deploying happen inside agent runs, under their own
   permissions.
@@ -84,7 +84,15 @@ Everything else becomes a library.
   restarts and deploys. Nothing polls.
 - **Modern functional and pleasant to read.** It has a ReScript-flavoured
   surface, close to what models already write well, because agents will write
-  most Lun.
+  most Norn.
+
+## The name
+
+In Norse myth, the Norns sit beneath the world tree Yggdrasil. They spin the
+threads of fate for gods and people alike, settling what comes next and when.
+Norn was also a real language: the Norse tongue of Orkney and Shetland, last
+spoken in the 18th century. A language in which people and agents weave
+their work together borrows its name.
 
 ## Documents
 
@@ -93,7 +101,7 @@ Everything else becomes a library.
 
 ## Hosts
 
-A host implements Lun's effects: who the participants are, how requests reach
+A host implements Norn's effects: who the participants are, how requests reach
 them, which events exist, and where waiting programs are stored.
 [xMatrix](https://github.com/LambdaLabsHQ/xmatrix) is the first host. The
 language does not depend on it.

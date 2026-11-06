@@ -1,6 +1,6 @@
-# Lun: durable runtime research
+# Norn: durable runtime research
 
-> Written by Codex for the Lun design discussion, 2026-11-06. The xMatrix-specific adapter proposal from the original study lives in the xMatrix repository.
+> Written by Codex for the Norn design discussion, 2026-11-06. The xMatrix-specific adapter proposal from the original study lives in the xMatrix repository.
 
 Design study, 2026-11-06. This is a proposal, not an implemented runtime or a performance benchmark. The language direction is modern functional programming with readable expression syntax. The language and its reference implementation should be independent of xMatrix; xMatrix is the first host.
 
