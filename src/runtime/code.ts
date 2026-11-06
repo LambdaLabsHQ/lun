@@ -11,26 +11,40 @@ export interface Code {
   nodeId(node: AstNode): string;
 }
 export function compile(program: Program): Code {
-  const ast = astToJson(program);
+  return compileAstJson(astToJson(program));
+}
+
+/** Load an existing definition without recoding the bytes that name it. */
+export function compileAstJson(ast: string): Code {
   const pinned = astFromJson(ast);
-  function freeze(value: unknown): void {
-    if (!value || typeof value !== "object" || Object.isFrozen(value)) return;
-    Object.freeze(value); Object.values(value).forEach(freeze);
+  const objects: unknown[] = [pinned];
+  while (objects.length) {
+    const value = objects.pop();
+    if (!value || typeof value !== "object" || Object.isFrozen(value)) continue;
+    Object.freeze(value);
+    for (const child of Object.values(value)) objects.push(child);
   }
-  freeze(pinned);
   const ids = new WeakMap<object, string>();
   const nodes: Record<string, AstNode> = Object.create(null);
   let nextNode = 0;
-  function visit(value: unknown): void {
-    if (Array.isArray(value)) { value.forEach(visit); return; }
-    if (!value || typeof value !== "object" || !("kind" in value) || !("span" in value)) return;
+  const pending: unknown[] = [pinned];
+  while (pending.length) {
+    const value = pending.pop();
+    if (Array.isArray(value)) {
+      for (let index = value.length - 1; index >= 0; index--) pending.push(value[index]);
+      continue;
+    }
+    if (!value || typeof value !== "object" || !("kind" in value) || !("span" in value)) continue;
     const node = value as AstNode;
-    if (ids.has(node)) return;
+    if (ids.has(node)) continue;
     const id = `n${nextNode++}`;
     ids.set(node, id); nodes[id] = node;
-    for (const field of NODE_FIELDS[node.kind]) visit((node as unknown as Record<string, unknown>)[field]);
+    const fields = NODE_FIELDS[node.kind];
+    // Reverse pushes preserve the original depth-first node numbering.
+    for (let index = fields.length - 1; index >= 0; index--) {
+      pending.push((node as unknown as Record<string, unknown>)[fields[index]]);
+    }
   }
-  visit(pinned);
   Object.freeze(nodes);
   return Object.freeze({
     ast,
