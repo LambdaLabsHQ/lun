@@ -106,7 +106,7 @@ function binary(op: BinaryOperator, left: Value, right: Value): Value {
   return { type: "int", value: String(op === "+" ? a + b : op === "-" ? a - b : op === "*" ? a * b : a / b) };
 }
 function sequence(code: Code, machine: Machine, items: (TopLevelItem | Statement)[], env: string): void {
-  const statements = items.filter(n => n.kind !== "TypeDecl" && n.kind !== "Open");
+  const statements = items.filter(n => n.kind !== "TypeDecl" && n.kind !== "External" && n.kind !== "Open");
   if (!statements.length) { machine.control = { kind: "value", value: unit }; return; }
   machine.frames.push({ kind: "sequence", rest: statements.slice(1).map(code.nodeId), env });
   machine.control = { kind: "eval", node: code.nodeId(statements[0]), env };

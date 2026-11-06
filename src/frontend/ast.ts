@@ -33,18 +33,33 @@ export interface Program {
   span: Span;
 }
 
-/** Type declarations and `open` appear only at the top level of a program. */
-export type TopLevelItem = TypeDecl | Open | Statement;
+/** Type declarations, externals and `open` appear only at the top level of a program. */
+export type TopLevelItem = TypeDecl | External | Open | Statement;
 
-/** `type name<'a> = definition` */
+/** `type name<'a> = definition`, or `type name<'a>` for an abstract type. */
 export interface TypeDecl {
   kind: "TypeDecl";
   /** Lowercase type name, e.g. `probe`. */
   name: string;
   /** Type parameters, e.g. `'a` in `type box<'a> = Box('a)`. */
   params: TypeVar[];
-  /** A variant (`A | B(t)`), a record type (`{field: t}`) or an alias to another type. */
-  definition: VariantType | RecordType | TypeExpression;
+  /**
+   * A variant (`A | B(t)`), a record type (`{field: t}`) or an alias to
+   * another type. Null for an abstract type such as `type pr`, whose values
+   * only the host makes; only a host interface file declares one.
+   */
+  definition: VariantType | RecordType | TypeExpression | null;
+  span: Span;
+}
+
+/**
+ * `external merged: (string) => event<pr>`: a value that the host supplies,
+ * with its type. Only a host interface file declares one.
+ */
+export interface External {
+  kind: "External";
+  name: string;
+  type: TypeExpression;
   span: Span;
 }
 
@@ -491,9 +506,9 @@ export interface OrPattern {
 }
 
 // ---------------------------------------------------------------------------
-// Types (only in type declarations: v0 programs carry no annotations)
+// Types (only in type and external declarations: v0 programs carry no annotations)
 
-export type TypeExpression = TypeName | TypeVar | TupleType;
+export type TypeExpression = TypeName | TypeVar | TupleType | FunctionType;
 
 /** `string`, `list<'a>`, `result<int, string>` */
 export interface TypeName {
@@ -514,6 +529,31 @@ export interface TypeVar {
 export interface TupleType {
   kind: "TupleType";
   elements: TypeExpression[];
+  span: Span;
+}
+
+/**
+ * `(string, ~containing: pr) => event<release>`, `() => time`, `string => unit`.
+ * Functions are uncurried: one list of parameters, then the result.
+ */
+export interface FunctionType {
+  kind: "FunctionType";
+  /** Positional and labelled parameter types, in source order. Empty for `() => …`. */
+  params: ParameterType[];
+  result: TypeExpression;
+  span: Span;
+}
+
+/** A positional parameter type is the type itself. */
+export type ParameterType = TypeExpression | LabelledType;
+
+/** `~until: duration`, or `~until: duration=?` when a caller may leave the argument out. */
+export interface LabelledType {
+  kind: "LabelledType";
+  label: string;
+  type: TypeExpression;
+  /** True for `~label: type=?`. */
+  optional: boolean;
   span: Span;
 }
 
@@ -553,6 +593,7 @@ export interface FieldDecl {
 export type AstNode =
   | Program
   | TypeDecl
+  | External
   | Open
   | Let
   | LetRec
@@ -565,6 +606,7 @@ export type AstNode =
   | Pattern
   | FieldPattern
   | TypeExpression
+  | LabelledType
   | VariantType
   | ConstructorDecl
   | RecordType
@@ -582,6 +624,7 @@ export type FieldsOf<K extends NodeKind> = Exclude<keyof Extract<AstNode, { kind
 export const NODE_FIELDS = {
   Program: ["body"],
   TypeDecl: ["name", "params", "definition"],
+  External: ["name", "type"],
   Open: ["module"],
   Let: ["pattern", "value"],
   LetRec: ["bindings"],
@@ -627,6 +670,8 @@ export const NODE_FIELDS = {
   TypeName: ["name", "args"],
   TypeVar: ["name"],
   TupleType: ["elements"],
+  FunctionType: ["params", "result"],
+  LabelledType: ["label", "type", "optional"],
   VariantType: ["constructors"],
   ConstructorDecl: ["name", "args"],
   RecordType: ["fields"],
@@ -654,18 +699,19 @@ const ALTERNATIVE_KINDS = [
 ] as const satisfies readonly Pattern["kind"][];
 
 const PATTERN_KINDS = [...ALTERNATIVE_KINDS, "OrPattern"] as const;
-const TYPE_KINDS = ["TypeName", "TypeVar", "TupleType"] as const satisfies readonly TypeExpression["kind"][];
+const TYPE_KINDS = ["TypeName", "TypeVar", "TupleType", "FunctionType"] as const satisfies readonly TypeExpression["kind"][];
 const STATEMENT_KINDS = ["Let", "LetRec", ...EXPRESSION_KINDS] as const;
 
 /** The unions of ast.ts as lists of kinds, by the name an error message uses for them. */
 export const NODE_GROUPS = {
-  "top-level item": ["TypeDecl", "Open", ...STATEMENT_KINDS],
+  "top-level item": ["TypeDecl", "External", "Open", ...STATEMENT_KINDS],
   statement: STATEMENT_KINDS,
   expression: EXPRESSION_KINDS,
   argument: [...EXPRESSION_KINDS, "LabelledArg"],
   parameter: [...PATTERN_KINDS, "LabelledParam"],
   pattern: PATTERN_KINDS,
   type: TYPE_KINDS,
+  "parameter type": [...TYPE_KINDS, "LabelledType"],
 } as const satisfies { readonly [group: string]: readonly NodeKind[] };
 
 export type NodeGroup = keyof typeof NODE_GROUPS;
@@ -679,7 +725,8 @@ type UnlistedKinds =
   | Unlisted<Argument["kind"], (typeof NODE_GROUPS)["argument"]>
   | Unlisted<Parameter["kind"], (typeof NODE_GROUPS)["parameter"]>
   | Unlisted<Pattern["kind"], typeof PATTERN_KINDS>
-  | Unlisted<TypeExpression["kind"], typeof TYPE_KINDS>;
+  | Unlisted<TypeExpression["kind"], typeof TYPE_KINDS>
+  | Unlisted<ParameterType["kind"], (typeof NODE_GROUPS)["parameter type"]>;
 const allKindsGrouped: [UnlistedKinds] extends [never] ? true : UnlistedKinds = true;
 void allKindsGrouped;
 
@@ -731,7 +778,8 @@ void allValuesListed;
 /** The schema of every field of every node kind. The compiler checks that it covers each field. */
 export const NODE_SCHEMA: { readonly [K in NodeKind]: { readonly [F in FieldsOf<K>]: FieldSchema } } = {
   Program: { body: list(node("top-level item")) },
-  TypeDecl: { name: "string", params: list(node(["TypeVar"])), definition: node(["VariantType", "RecordType", ...TYPE_KINDS]) },
+  TypeDecl: { name: "string", params: list(node(["TypeVar"])), definition: nullable(node(["VariantType", "RecordType", ...TYPE_KINDS])) },
+  External: { name: "string", type },
   Open: { module: { oneOf: ["Std"] } },
   Let: { pattern, value: expression },
   LetRec: { bindings: list(node(["RecBinding"]), 1) },
@@ -777,8 +825,19 @@ export const NODE_SCHEMA: { readonly [K in NodeKind]: { readonly [F in FieldsOf<
   TypeName: { name: "string", args: list(type) },
   TypeVar: { name: "string" },
   TupleType: { elements: list(type, 2) },
+  FunctionType: { params: list(node("parameter type")), result: type },
+  LabelledType: { label: "string", type, optional: "boolean" },
   VariantType: { constructors: list(node(["ConstructorDecl"]), 1) },
   ConstructorDecl: { name: "string", args: list(type) },
   RecordType: { fields: list(node(["FieldDecl"]), 1) },
   FieldDecl: { name: "string", type },
 };
+
+/**
+ * The node kinds that norn-ast version 2 added, for host interface files. A
+ * `TypeDecl` whose `definition` is null, an abstract type, also needs version
+ * 2. A tree is written with the lowest version that can express it, so a tree
+ * without these keeps the exact bytes, and so the code identity, that version
+ * 1 gave it.
+ */
+export const VERSION_2_KINDS = ["External", "FunctionType", "LabelledType"] as const satisfies readonly NodeKind[];

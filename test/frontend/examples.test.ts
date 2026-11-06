@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { test } from "node:test";
-import { NODE_FIELDS, astFromJson, astToJson, type AstNode, type Pos } from "../../src/frontend/index.ts";
+import { NODE_FIELDS, astFromJson, astToJson, astVersion, type AstNode, type Pos } from "../../src/frontend/index.ts";
 import { assertNoSharedObjects, parseOk, preorderKinds, prettyAstJson } from "./helpers.ts";
 
 const root = new URL("../../", import.meta.url);
@@ -11,9 +11,9 @@ const norn = (directory: string) =>
     .filter((name) => name.endsWith(".norn"))
     .sort()
     .map((name) => `${directory}/${name}`);
-const programs = [...norn("examples"), ...norn("std")];
+const programs = [...norn("examples"), ...norn("std"), ...norn("hosts")];
 
-test("the examples and the standard library exist", () => {
+test("the examples, the standard library and the reference host interface exist", () => {
   assert.deepEqual(programs, [
     "examples/decide.norn",
     "examples/follow-up.norn",
@@ -21,7 +21,14 @@ test("the examples and the standard library exist", () => {
     "examples/release-chain.norn",
     "examples/standing-duty.norn",
     "std/std.norn",
+    "hosts/reference.norn",
   ]);
+});
+
+test("the reference host interface needs norn-ast version 2; the programs need only version 1", () => {
+  for (const path of programs) {
+    assert.equal(astVersion(parseOk(read(path))), path.startsWith("hosts/") ? 2 : 1, path);
+  }
 });
 
 for (const path of programs) {
@@ -48,10 +55,13 @@ for (const name of ["decide", "push"]) {
   });
 }
 
-test("every norn block in the spec parses", () => {
+test("every norn block in the spec and the type design parses", () => {
   const blocks = codeBlocks(read("docs/spec.md"), "norn");
   assert.ok(blocks.length >= 6);
   for (const block of blocks) parseOk(block);
+  const interfaces = codeBlocks(read("docs/types.md"), "norn");
+  assert.ok(interfaces.length >= 1);
+  for (const block of interfaces) parseOk(block);
 });
 
 test("every code block in the README parses", () => {
