@@ -1,7 +1,7 @@
 // The standard library, written in Norn and opened with `open Std` (spec §8).
 
 let remind = (who, text, ~at) => {
-  at->sleepUntil?
+  after(at)->wait?
   ask(who, text)
 }
 
@@ -20,8 +20,14 @@ let followUp = (who, text, ~until, ~escalateTo) => {
   }
 }
 
+let rec mergeAll = (stream, others) =>
+  switch others {
+  | [] => stream
+  | [next, ...rest] => stream->merge(next)->mergeAll(rest)
+  }
+
 let schedule = (~every as period, ~on=[], task) =>
   every(period)->mergeAll(on)->forEach(_ => run(@auto, task))
 
 let digest = (who, ~every as period) =>
-  schedule(~every=period, `Tell ${who->name} what changed since they last looked; say nothing if nothing changed`)
+  schedule(~every=period, `Tell ${who->show} what changed since they last looked; say nothing if nothing changed`)

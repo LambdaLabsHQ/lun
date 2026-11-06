@@ -2,8 +2,11 @@
 
 **The coordination language for teams of people and AI agents.**
 
-> Status: design draft; front-end only. The spec is open for discussion:
-> open an issue.
+> Status: design draft, with a local reference implementation: a parser, a
+> durable evaluator and a simulated host, which run four of the spec's
+> examples from source ([reference runtime](docs/reference-runtime.md)).
+> There is no production host yet. The spec is open for discussion: open an
+> issue.
 
 Norn solves coordination **at the language level**. A team of people and AI
 agents has to settle several things:
