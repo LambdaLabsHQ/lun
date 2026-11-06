@@ -411,22 +411,32 @@ actors.**
   (`escalating`, `decide`). Agents write direct-style code; handlers live in
   reviewed library code.
 - **Virtual actors.** Each running program instance is a single-threaded actor
-  with its own identity and state, so no conductor exists. Programs share only
-  two things:
+  with its own identity and state, so no conductor exists. The coordination
+  protocol exposes two shared constructs; host resources such as documents
+  retain their own concurrency rules:
   - **Durable single-assignment requests.** A request goes from `Pending` to
-    exactly one terminal outcome, and the first committed resolution wins.
+    exactly one terminal outcome. A resolution must match the request's
+    current epoch, reply schema and authority; the first valid resolution
+    committed by its authority wins. Invalid or stale replies are evidence,
+    not contenders. Resolution, cancellation and handover are serialized by
+    that same authority.
   - **Pushed events.**
-- **Where coordination is needed.** By the CALM theorem, monotone steps need
-  no coordination: a fact such as "the PR is merged" stays true once it is
-  true. The non-monotone steps are:
+- **Where coordination is needed.** The [CALM theorem](https://arxiv.org/abs/1901.01930)
+  relates coordination-free consistency to logical monotonicity. Immutable
+  observations, such as evidence that a PR was merged, can accumulate without
+  retracting earlier observations. Examples of non-monotone decisions here
+  include:
   - "no answer by T";
   - a declared default;
   - the winner of an `any`;
   - `cancel`;
   - `handOver`.
 
-  These are exactly the steps the owning actor decides, in its own committed
-  order.
+  This is not an exhaustive list or a proof that the whole runtime is
+  coordination-free. Admission, current permissions, revocation and resource
+  invariants may also require authoritative ordering. Each such decision is
+  committed by the authority for its scope; an actor cannot settle another
+  authority's policy merely by observing an event.
 - **Code identity.** Code is pinned per instance; edits start new instances;
   migration is explicit, as with Erlang's `code_change`. The recovery
   backend, explicit evaluator state or replay, is still chosen by the
@@ -437,27 +447,37 @@ actors.**
 1. **Structured cancellation.** `scope(f)` cancels every request started
    inside `f` when `f` returns, loses an `any`, or passes its deadline. This
    is the same idea as Orc pruning, YAWL cancel regions and leaving a
-   statechart state.
+   statechart state. This is a logical, persistent scope: a durable program
+   instance outlives the process or agent turn that created it. Ending that
+   creator's turn does not end the program's scope or its reminders. Leaving
+   the logical scope withdraws authority and requests cancellation; it does
+   not prove that an external participant has stopped or undo prior effects.
 2. **Handover is delegation plus fencing.**
    - `handOver(r, who)` keeps the same request and increases its epoch.
    - A resolution or capability that carries an old epoch is refused.
    - The previous holder is told it was released.
-3. **Everyone asked hears how it ended.** When a request ends by answer,
-   default, cancellation or handover, every participant who was asked is told
-   the outcome. Nobody is left believing they are still on the hook, and no
-   failure is silent.
+3. **Outcome and delegation notices are durable.** A terminal outcome creates
+   a durable notification intent for affected participants. Handover creates
+   a delegation-change notice; it does not terminate the request. Delivery
+   respects current access and availability. Failed or suppressed delivery is
+   visible to the responsible owner rather than counted as delivered; the
+   protocol cannot guarantee that an offline person has read a notice.
 4. **Correlation keys.** Every wait names exactly what it waits for: a request
    identity, or a PR, SHA or release. A later, unrelated message can never
    satisfy it.
-5. **Effect rows as an authority manifest.** The inferred effects of a program
-   (`ask`, `run`, `say` and their targets) are shown before it starts, the same
-   way a reviewer reads a capability list.
+5. **Effect rows inform review, not authorization.** The inferred operation
+   families (`ask`, `run`, `say`) and statically known targets are shown before
+   a program starts. Dynamically selected participants still require runtime
+   resolution. An effect row neither grants a capability nor replaces the
+   host's current permission and epoch checks at each effect.
 6. **Dry runs.** A handler with a simulated clock and scripted answers runs a
    program before it is committed. That is how a person sees "if nobody
    answers, at 12:00 this happens".
 
 **Choreographies are a view, not the core.** Choreographic programming gives
-a global narrative and deadlock freedom. But only the program's own role runs
+a global narrative; some calculi prove deadlock freedom under their specified
+projection and execution assumptions. Those guarantees do not automatically
+apply to this language's external participants. Only the program's own role runs
 code: people, agents and external systems cannot run projected programs.
 Timeouts, refusal, revocation, handover and durable waits are still research
 topics there. Lun therefore keeps the effects core and borrows the
