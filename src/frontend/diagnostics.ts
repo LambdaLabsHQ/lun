@@ -1,5 +1,13 @@
 import type { Span } from "./ast.ts";
 
+/** What a program that nests deeper than the stack allows is told: the platform's real limit, not a fixed bound. */
+export const STACK_EXHAUSTED = "the program nests deeper than this implementation's stack can follow";
+
+/** Whether an error is the JavaScript engine running out of stack. */
+export function isStackExhausted(error: unknown): boolean {
+  return error instanceof RangeError && /call stack/i.test(error.message);
+}
+
 /** A syntax error with the source range it is about. */
 export interface Diagnostic {
   message: string;

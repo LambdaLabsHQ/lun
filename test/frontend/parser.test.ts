@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MAX_NESTING, parse } from "../../src/frontend/index.ts";
+import { STACK_EXHAUSTED, treeLines } from "../../src/frontend/index.ts";
 import {
   assertNoSharedObjects, binary, call, ctor, ctorPattern, id, int, item, labelled, parseErrors, parseOk, participant, pipe,
   preorderKinds, str, strip, variable,
@@ -287,15 +287,42 @@ test("after an error the parser resumes at the next top-level line", () => {
   ]);
 });
 
-test(`nesting deeper than ${MAX_NESTING} levels is refused`, () => {
-  const nested = (depth: number) => "[".repeat(depth) + "x" + "]".repeat(depth);
-  assert.ok(parse(nested(MAX_NESTING - 1)).ok);
-  const deep = parseErrors(nested(MAX_NESTING));
-  assert.equal(deep[0]!.message, `this nests more than ${MAX_NESTING} levels deep; split it into smaller parts with let`);
-  // Long chains count too, and far deeper input fails the same way instead of overflowing the stack.
-  assert.equal(parseErrors(Array(MAX_NESTING + 1).fill("x").join(" + "))[0]!.message, deep[0]!.message);
-  assert.equal(parseErrors("x" + "->f".repeat(MAX_NESTING))[0]!.message, deep[0]!.message);
-  assert.equal(parseErrors("{".repeat(100_000))[0]!.message, deep[0]!.message);
+test("chains of any length are loops: 10,000 links parse and survive a JSON round trip", () => {
+  const roundTrip = (source: string) => {
+    const program = parseOk(source);
+    const text = astToJson(program);
+    assert.equal(astToJson(astFromJson(text)), text);
+    return program.body[0]!;
+  };
+  // The spine of a chain is as deep as the chain is long; walk it without recursion.
+  const spine = (node: { kind: string }, next: (node: never) => { kind: string }) => {
+    let length = 0;
+    for (let at = node; at.kind !== "Identifier"; at = next(at as never)) length += 1;
+    return length;
+  };
+  assert.equal(spine(roundTrip("x" + "->f".repeat(10_000)), (node: { left: { kind: string } }) => node.left), 10_000);
+  assert.equal(spine(roundTrip(Array(10_001).fill("x").join(" + ")), (node: { left: { kind: string } }) => node.left), 10_000);
+  assert.equal(spine(roundTrip("f" + "(x)".repeat(10_000)), (node: { callee: { kind: string } }) => node.callee), 10_000);
+  assert.equal(spine(roundTrip("x" + "?".repeat(10_000)), (node: { operand: { kind: string } }) => node.operand), 10_000);
+  assert.equal(spine(roundTrip("!".repeat(10_000) + "x"), (node: { operand: { kind: string } }) => node.operand), 10_000);
+  // The outline is written without recursion too.
+  let lines = 0;
+  for (const _ of treeLines(parseOk("x" + "->f".repeat(10_000)))) lines += 1;
+  assert.equal(lines, 20_003);
+  const ifs = roundTrip("if a { 1 }" + " else if a { 1 }".repeat(9_999) + " else { 2 }");
+  assert.equal(spine(ifs, (node: { elseBranch: { kind: string } }) => (node.elseBranch.kind === "Block" ? { kind: "Identifier" } : node.elseBranch)), 10_000);
+});
+
+test("nesting deeper than the stack can follow is a diagnostic, not a crash", () => {
+  for (const source of ["(".repeat(200_000) + "x" + ")".repeat(200_000), "[".repeat(200_000), "x => ".repeat(200_000) + "x"]) {
+    const [diagnostic, ...rest] = parseErrors(source);
+    assert.equal(diagnostic!.message, STACK_EXHAUSTED);
+    assert.equal(diagnostic!.span.start.line, 1);
+    assert.deepEqual(rest, []);
+  }
+  // The other items of the program are still read and checked.
+  const diagnostics = parseErrors(`let a = ${"(".repeat(200_000)}\nlet b = = 1\nlet c = 2`);
+  assert.deepEqual(diagnostics.map((d) => [d.message, d.span.start.line]), [[STACK_EXHAUSTED, 1], ["expected an expression, found '='", 2]]);
 });
 
 test("CRLF line endings parse to the same tree", () => {

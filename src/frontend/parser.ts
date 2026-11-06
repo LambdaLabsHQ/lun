@@ -6,25 +6,20 @@
  * syntax rules it follows are in docs/ast.md.
  */
 import type * as A from "./ast.ts";
-import type { Diagnostic } from "./diagnostics.ts";
+import { STACK_EXHAUSTED, isStackExhausted, type Diagnostic } from "./diagnostics.ts";
 import { lex, type Token, type TokenKind } from "./lexer.ts";
 
 export type ParseResult = { ok: true; program: A.Program } | { ok: false; diagnostics: Diagnostic[] };
 
 /**
- * How deeply syntax may nest. Every level counts: parentheses, blocks,
- * arguments, patterns and types, and also each link of one operator, pipe or
- * call chain, since each link nests the tree one level deeper. Without a
- * bound, nested blocks overflow Node's default stack at about 880 levels; 256
- * keeps the parser, the JSON writer and other recursive walks over the tree
- * at under a third of that. Real programs nest a few dozen levels at most.
- */
-export const MAX_NESTING = 256;
-
-/**
  * Parses a whole program. Lexical errors are reported alone; otherwise the
  * parser reports one error per top-level item it cannot read and carries on
  * at the next line that starts in column 1.
+ *
+ * Chains (calls, field access, `->`, `?`, binary and prefix operators, `else
+ * if`) are read in loops. Nested constructs such as parentheses, blocks and
+ * lambdas recurse, so their only limit is the stack: running out of it is a
+ * diagnostic at the construct being read, not a crash.
  */
 export function parse(source: string): ParseResult {
   const lexed = lex(source);
@@ -75,7 +70,6 @@ class Parser {
   /** For each `(`, the index of its matching `)`, or -1. */
   private readonly closing: Int32Array;
   private index = 0;
-  private depth = 0;
 
   constructor(tokens: Token[]) {
     this.tokens = tokens;
@@ -163,14 +157,6 @@ class Parser {
     if (this.at(":")) this.fail("type annotations are not part of Norn v0: types are inferred (spec §4)");
   }
 
-  /** Counts one level of nesting, failing past MAX_NESTING. Callers subtract what they add. */
-  private enter(): void {
-    this.depth += 1;
-    if (this.depth > MAX_NESTING) {
-      this.fail(`this nests more than ${MAX_NESTING} levels deep; split it into smaller parts with let`);
-    }
-  }
-
   // Program and statements -------------------------------------------------
 
   parseProgram(): A.Program {
@@ -181,8 +167,9 @@ class Parser {
         body.push(this.parseTopLevelItem());
         this.endStatement([]);
       } catch (error) {
-        if (!(error instanceof ParseError)) throw error;
-        this.diagnostics.push(error.diagnostic);
+        if (error instanceof ParseError) this.diagnostics.push(error.diagnostic);
+        else if (isStackExhausted(error)) this.diagnostics.push({ message: STACK_EXHAUSTED, span: spanOf(this.peek()) });
+        else throw error;
         this.recover(start);
       }
     }
@@ -191,7 +178,6 @@ class Parser {
 
   /** Skips to the next line that starts in column 1 with something that can begin an item. */
   private recover(start: number): void {
-    this.depth = 0;
     if (this.index === start) this.next();
     while (!this.at("EOF")) {
       const token = this.peek();
@@ -277,10 +263,7 @@ class Parser {
   // Expressions ------------------------------------------------------------
 
   private parseExpression(): A.Expression {
-    this.enter();
-    const expression = this.startsLambda() ? this.parseLambda() : this.parseBinary(0);
-    this.depth -= 1;
-    return expression;
+    return this.startsLambda() ? this.parseLambda() : this.parseBinary(0);
   }
 
   /** `x =>`, `_ =>` or `(…) =>`. */
@@ -339,7 +322,6 @@ class Parser {
 
   private parseBinary(minPrecedence: number): A.Expression {
     let left = this.parseUnary();
-    let links = 0;
     for (;;) {
       const operator = this.peek();
       const precedence = BINARY_PRECEDENCE.get(operator.kind);
@@ -347,54 +329,54 @@ class Parser {
       // `-x` at the start of a line begins a new statement; `- x` continues the line above.
       if ((operator.kind === "-" || operator.kind === "-.") && this.atLineStart() && !spaceAfter(operator, this.peek(1))) break;
       this.next();
-      this.enter();
-      links += 1;
       const right = this.parseBinary(precedence + 1);
       left = { kind: "Binary", op: operator.kind as A.BinaryOperator, left, right, span: span(left.span.start, right.span.end) };
     }
-    this.depth -= links;
     return left;
   }
 
   private parseUnary(): A.Expression {
-    const operator = this.peek();
-    if (operator.kind !== "!" && operator.kind !== "-" && operator.kind !== "-.") return this.parsePostfix();
-    this.next();
-    this.enter();
-    const operand = this.parseUnary();
-    this.depth -= 1;
-    return { kind: "Unary", op: operator.kind, operand, span: span(operator.span.start, operand.span.end) };
+    const token = this.peek();
+    return token.kind === "!" || token.kind === "-" || token.kind === "-." ? this.parsePrefixed() : this.parsePostfix();
+  }
+
+  /** Prefix operators, read in a loop and applied innermost first: `!-x` is `!(-x)`. */
+  private parsePrefixed(): A.Expression {
+    const operators: Token[] = [];
+    for (let token = this.peek(); token.kind === "!" || token.kind === "-" || token.kind === "-."; token = this.peek()) {
+      operators.push(this.next());
+    }
+    let expression = this.parsePostfix();
+    for (let index = operators.length - 1; index >= 0; index -= 1) {
+      const operator = operators[index]!;
+      const op = operator.kind as A.UnaryOperator;
+      expression = { kind: "Unary", op, operand: expression, span: span(operator.span.start, expression.span.end) };
+    }
+    return expression;
   }
 
   /** An atom followed by calls `(…)`, field access `.f`, pipes `->f(…)` and `?`, read left to right. */
   private parsePostfix(): A.Expression {
     let expression = this.parseAtom();
-    let links = 0;
     for (;;) {
       const token = this.peek();
       if (this.atArguments()) {
-        this.enter();
         const args = this.parseArguments();
         expression = { kind: "Call", callee: expression, args, span: span(expression.span.start, this.previous().span.end) };
       } else if (token.kind === ".") {
-        this.enter();
         this.next();
         const field = this.expectIdent("a field name after '.'");
         expression = { kind: "FieldAccess", record: expression, field: field.text, span: span(expression.span.start, field.span.end) };
       } else if (token.kind === "->") {
-        this.enter();
         this.next();
         expression = this.parsePipe(expression);
       } else if (token.kind === "?") {
-        this.enter();
         this.next();
         expression = { kind: "Try", operand: expression, span: span(expression.span.start, token.span.end) };
       } else {
         break;
       }
-      links += 1;
     }
-    this.depth -= links;
     return expression;
   }
 
@@ -626,17 +608,28 @@ class Parser {
     return { kind: "Block", body, span: this.spanFrom(open) };
   }
 
+  /** `if … else if … else …`, read in a loop: each `else if` is the `elseBranch` of the `If` before it. */
   private parseIf(): A.If {
-    const ifToken = this.next();
-    this.enter();
-    const condition = this.parseExpression();
-    const thenBranch = this.parseBlock("after the condition of 'if'");
-    let elseBranch: A.Block | A.If | null = null;
-    if (this.eat("else")) {
-      elseBranch = this.at("if") ? this.parseIf() : this.parseBlock("or 'if' after 'else'");
+    const branches: { ifToken: Token; condition: A.Expression; thenBranch: A.Block }[] = [];
+    let last: A.Block | null = null;
+    for (;;) {
+      const ifToken = this.next();
+      const condition = this.parseExpression();
+      const thenBranch = this.parseBlock("after the condition of 'if'");
+      branches.push({ ifToken, condition, thenBranch });
+      if (!this.eat("else")) break;
+      if (!this.at("if")) {
+        last = this.parseBlock("or 'if' after 'else'");
+        break;
+      }
     }
-    this.depth -= 1;
-    return { kind: "If", condition, thenBranch, elseBranch, span: this.spanFrom(ifToken) };
+    const end = this.previous().span.end;
+    let elseBranch: A.Block | A.If | null = last;
+    for (let index = branches.length - 1; index >= 0; index -= 1) {
+      const { ifToken, condition, thenBranch } = branches[index]!;
+      elseBranch = { kind: "If", condition, thenBranch, elseBranch, span: span(ifToken.span.start, end) };
+    }
+    return elseBranch as A.If;
   }
 
   private parseSwitch(): A.Switch {
@@ -657,11 +650,7 @@ class Parser {
     const bar = this.next();
     const pattern = this.parsePattern();
     let guard: A.Expression | null = null;
-    if (this.eat("if")) {
-      this.enter();
-      guard = this.parseBinary(0);
-      this.depth -= 1;
-    }
+    if (this.eat("if")) guard = this.parseBinary(0);
     this.expect("=>", guard === null ? "after pattern" : "after the guard");
     const body = this.parseStatements(true);
     const first = body[0];
@@ -676,7 +665,6 @@ class Parser {
   // Patterns ---------------------------------------------------------------
 
   private parsePattern(): A.Pattern {
-    this.enter();
     const first = this.parsePrimaryPattern();
     let pattern = first;
     if (this.at("|")) {
@@ -689,7 +677,6 @@ class Parser {
       while (this.eat("|")) add(this.parsePrimaryPattern());
       pattern = { kind: "OrPattern", alternatives, span: this.spanFrom(first) };
     }
-    this.depth -= 1;
     return pattern;
   }
 
@@ -894,7 +881,6 @@ class Parser {
   }
 
   private parseType(): A.TypeExpression {
-    this.enter();
     const token = this.peek();
     let type: A.TypeExpression;
     if (token.kind === "TypeVar") {
@@ -929,7 +915,6 @@ class Parser {
       this.fail(`expected a type, found ${describe(token)}`);
     }
     if (this.at("=>")) this.fail("function types are not part of Norn v0 type declarations");
-    this.depth -= 1;
     return type;
   }
 }

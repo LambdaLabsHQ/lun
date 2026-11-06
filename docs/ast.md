@@ -10,6 +10,10 @@ TypeScript types or through its JSON form.
   it. `norn parse --json file.norn` prints it.
 - **Field order:** `NODE_FIELDS` in `ast.ts` lists each kind's fields in JSON
   order. The compiler checks that it lists every field.
+- **Schema:** `NODE_SCHEMA` in `ast.ts` says what each field may hold, and
+  `NODE_GROUPS` names the unions of node kinds. The compiler checks that the
+  schema covers every field and that each group lists every kind of its
+  union. See [Reading and writing JSON](#reading-and-writing-json).
 
 ## Parsing
 
@@ -34,17 +38,24 @@ else for (const d of result.diagnostics) console.error(formatDiagnostic(d, sourc
     literal, are all reported, and then parsing stops.
   - Otherwise the parser reports one error per top-level item it cannot read.
     It carries on at the next line that starts in column 1.
-- **Nesting bound.** Syntax may nest at most `MAX_NESTING` (256) levels.
-  - Every level counts: parentheses, blocks, arguments, patterns and types,
-    and also each link of one operator, pipe or call chain, since each link
-    nests the tree one level deeper.
-  - Deeper input fails with a syntax error instead of overflowing the stack.
-  - Without the bound, nested blocks overflow Node's default stack at about
-    880 levels. 256 keeps the parser, the JSON writer and other recursive walks
-    over the tree well inside it.
-  - The tree a consumer walks is therefore at most a few hundred levels deep.
+- **Depth.** There is no fixed limit on nesting.
+  - Chains are read in loops, and they can be as long as memory allows. This
+    covers calls, field access, `->`, `?`, binary and prefix operators, and
+    `else if`.
+  - Nested constructs such as parentheses, blocks, lambdas and `switch`
+    recurse. Their limit is the stack: on Node's default stack that is
+    about 1,000 to 5,000 levels, depending on the construct.
+  - Running out of stack is the diagnostic "the program nests deeper than
+    this implementation's stack can follow". It points at the construct
+    being read, and it is not a crash.
+- **Deep trees.** A long chain makes a deep tree. `x->f->f…` with 10,000
+  links is a `Pipe` whose `left` is a `Pipe`, 10,000 levels down.
+  - The JSON reader and writer and the outline printer (`treeLines`) do not
+    recurse, so any tree can be written, read and printed.
+  - A walker over the tree should not assume that the tree is shallow.
 - **CLI.**
-  - `norn parse [--json] file.norn` prints the tree as an outline, or as JSON.
+  - `norn parse [--json] file.norn` prints the tree as an outline, or as JSON
+    on one line. `-` reads standard input.
   - `norn check paths…` reports the errors in files, and in the `.norn` files
     under directories.
   - Both exit with 1 on a syntax error and 2 on a usage error.
@@ -52,6 +63,7 @@ else for (const d of result.diagnostics) console.error(formatDiagnostic(d, sourc
 ## Stability
 
 The JSON document carries `"format": "norn-ast"` and `"version": 1`.
+`NODE_FIELDS` and `NODE_SCHEMA` are part of the contract.
 
 - Any change to the shape of an existing node kind bumps the version. This
   includes renaming, removing or retyping a field, or changing how existing
@@ -61,7 +73,10 @@ The JSON document carries `"format": "norn-ast"` and `"version": 1`.
 
 ## The JSON document
 
-`q->wait(~until=1h)?`, with no trailing newline, is the document below:
+`astToJson` writes the document on one line. The JSON text is canonical,
+because the writer orders the keys itself: the same tree always gives the
+same text, whatever order its objects were built in. Here is
+`q->wait(~until=1h)?`, with no trailing newline, laid out for reading:
 
 ```json
 {
@@ -136,6 +151,55 @@ Conventions:
   `{count}` or `~until`, as in a tree read back from JSON. A walk that skips
   objects it has seen, such as one that numbers nodes, therefore gives the
   same result for a fresh parse and for a JSON round trip.
+
+## Reading and writing JSON
+
+`astFromJson(text)` reads a document, and `validateProgram(value)` checks a
+tree that is already in memory.
+
+**What is checked.** Both check every node against `NODE_SCHEMA`, and so does
+`astToJson` before it writes:
+
+- **Nodes.** Each node has a known `kind`, and exactly the fields of
+  `NODE_FIELDS` plus `span`, no more and no less.
+- **Spans.** A span is exactly `{start, end}` and does not end before it
+  starts.
+- **Positions.** A position is exactly `{line, column, offset}`, made of
+  integers. `line` and `column` are at least 1, and `offset` at least 0.
+- **Field values.** Each field holds what its schema says:
+  - `"string"` or `"boolean"`;
+  - `"number"`, which is finite, or `"integer"`, a safe integer;
+  - `"decimal"`, a canonical decimal string such as `"42"` or `"-1"`, or
+    `"digits"`, one without a sign;
+  - `oneOf`, one of listed strings such as the operators, duration units,
+    reference kinds and `"Std"`;
+  - `node`, a node of a group such as `expression`, `pattern` or `argument`,
+    or of listed kinds;
+  - `list`, with a minimum length where the tree needs one. A tuple has at
+    least two elements, and a `switch` at least one case;
+  - `nullable`, for a slot that may hold `null`.
+
+  An expression slot therefore refuses a pattern node, and so on.
+- **Shape rules.**
+  - A template has one more string than expressions.
+  - An `OrPattern` is not directly inside another.
+- **Identity.** No node or list appears twice in the tree, which also rules
+  out cycles. Spans may be shared in a tree built by hand; only nodes and
+  lists have an identity that matters.
+- **The document around the tree** is exactly `format`, `version` and
+  `program`.
+
+**Errors.** A problem is an `AstJsonError`. It names the JSON path of the first
+problem in document order:
+
+```
+program.body[2].value.args[0]: unknown field "foo"
+program.body[2].pattern: expected a pattern, found an Identifier node
+program.body[3].cases: expected at least 1 item, found 0
+```
+
+The checks do not recurse, so a document of any depth is read or refused
+cleanly.
 
 ## Nodes
 
