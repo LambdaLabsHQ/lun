@@ -1,0 +1,9 @@
+// Keep going until a judged condition holds.
+let rec push = () => {
+  let report = run(@claude, "Move #1439 forward until it is merged and verified live")?
+  if !judge("merged and verified live", ~about=report)? {
+    prActivity("acme/api#1439")->merge(after(2h))->wait?
+    push()
+  }
+}
+push()

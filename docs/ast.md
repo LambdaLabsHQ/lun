@@ -11,6 +11,44 @@ TypeScript types or through its JSON form.
 - **Field order:** `NODE_FIELDS` in `ast.ts` lists each kind's fields in JSON
   order. The compiler checks that it lists every field.
 
+## Parsing
+
+[`src/frontend/index.ts`](../src/frontend/index.ts) exports the front-end:
+
+```ts
+import { parse, astToJson, formatDiagnostic } from "./src/frontend/index.ts";
+
+const result = parse(source);
+if (result.ok) console.log(astToJson(result.program));
+else for (const d of result.diagnostics) console.error(formatDiagnostic(d, source, "main.norn"));
+```
+
+- **Result.** `parse(source)` returns `{ok: true, program}` or
+  `{ok: false, diagnostics}`. It never returns a partial tree.
+- **Diagnostics.** A diagnostic is `{message, span}`. `diagnosticLine` gives
+  its one-line form,
+  `expected '=>' after pattern, found 'run' at examples/decide.norn:4:14`.
+  `formatDiagnostic` adds the source line, with a caret under the span.
+- **Error recovery.**
+  - Lexical errors, such as an unterminated string or an invalid time
+    literal, are all reported, and then parsing stops.
+  - Otherwise the parser reports one error per top-level item it cannot read.
+    It carries on at the next line that starts in column 1.
+- **Nesting bound.** Syntax may nest at most `MAX_NESTING` (256) levels.
+  - Every level counts: parentheses, blocks, arguments, patterns and types,
+    and also each link of one operator, pipe or call chain, since each link
+    nests the tree one level deeper.
+  - Deeper input fails with a syntax error instead of overflowing the stack.
+  - Without the bound, nested blocks overflow Node's default stack at about
+    880 levels. 256 keeps the parser, the JSON writer and other recursive walks
+    over the tree well inside it.
+  - The tree a consumer walks is therefore at most a few hundred levels deep.
+- **CLI.**
+  - `norn parse [--json] file.norn` prints the tree as an outline, or as JSON.
+  - `norn check paths…` reports the errors in files, and in the `.norn` files
+    under directories.
+  - Both exit with 1 on a syntax error and 2 on a usage error.
+
 ## Stability
 
 The JSON document carries `"format": "norn-ast"` and `"version": 1`.
@@ -23,7 +61,7 @@ The JSON document carries `"format": "norn-ast"` and `"version": 1`.
 
 ## The JSON document
 
-`q->wait(~until=1h)?` is the document below:
+`q->wait(~until=1h)?`, with no trailing newline, is the document below:
 
 ```json
 {
@@ -93,6 +131,11 @@ Conventions:
 - **Not in the tree:** parentheses leave no node, and a parenthesized
   expression keeps the span of what is inside them. Comments are not in the
   tree either.
+- **No shared objects.** No object appears twice in a tree. Every node, list,
+  span and position is a fresh object, even for punned names such as
+  `{count}` or `~until`, as in a tree read back from JSON. A walk that skips
+  objects it has seen, such as one that numbers nodes, therefore gives the
+  same result for a fresh parse and for a JSON round trip.
 
 ## Nodes
 
@@ -180,6 +223,9 @@ Details:
   the first positional argument. `x->f` and `x->f()` both have empty `args`.
   `callee` is an `Identifier` or a parenthesized expression. The pipe is kept
   as a node, not desugared into a `Call`.
+- **Unary.** A minus before a number in an expression stays an operator:
+  `-1` is a `Unary` around `IntLiteral` `"1"`. Only literal patterns fold the
+  sign into the number.
 - **Try** is postfix `?`. On anything but `Done`, `Some` or `Ok`, the
   enclosing function returns the operand's value at once; at the top of a
   program it ends the program (§5).
@@ -268,11 +314,14 @@ otherwise.
   modules to make `->Module.fn` useful.
 - **Lambdas** have the lowest precedence; a lambda's body extends as far right
   as it can. A lambda starts with `x =>`, `_ =>` or `(…) =>`.
+- **Conditions.** The condition of an `if` and the value of a `switch` are
+  ordinary expressions, and the `{` that follows ends them.
 - **Lines.** Statements are separated by a line break or `;`. An expression
   continues onto the next line when that line starts with a binary operator,
   `->`, `.` or `?`.
   - An argument list must open on the line where the function ends. A `(` at
-    the start of a line begins a new expression.
+    the start of a line begins a new expression. The same holds for a
+    constructor's payload and a participant's arguments.
   - A `-` or `-.` that starts a line and is directly followed by its operand,
     as in `-x`, starts a new statement. With a space after it, as in `- x`, it
     continues the line above as subtraction.
