@@ -44,14 +44,16 @@ switch ask(@alice, "Ship the billing probe?", ~options=[Ship, Skip], ~until=2026
 let pr = merged("acme/api#1436")->wait?
 switch released(Beta, ~containing=pr)->wait(~until=1d) {
 | Done(release) => run(@codex, `Verify ${release.version} on the Windows build machine`)
-| _ => say(@alice, "#1436 did not reach a beta within a day")
+| other =>
+  say(@alice, "#1436 did not reach a beta within a day")
+  fail(other)
 }
 ```
 
 ```rescript
 // A standing duty: every day, and whenever CI fails on main.
 every(1d)
-->merge(ciFailed("acme/api"))
+->or(ciFailed("acme/api"))
 ->forEach(_ => run(@auto, "Check production health and fix the riskiest issue"))
 ```
 

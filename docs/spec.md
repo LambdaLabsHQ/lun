@@ -104,14 +104,16 @@ switch released(Beta, ~containing=pr)->wait(~until=1d) {
 | Done(release) =>
   machineUpdated(~machine="win-builder", ~atLeast=release.version)->wait?
   run(@codex, "Check out acme/api on win-builder and confirm the long-path fix")
-| _ => say(@alice, "#1436 did not reach a beta within a day")
+| other =>
+  say(@alice, "#1436 did not reach a beta within a day")
+  fail(other)
 }
 ```
 
 ```norn
 // A standing duty.
 every(1d)
-->merge(ciFailed("acme/api"))
+->or(ciFailed("acme/api"))
 ->forEach(_ => run(@auto, "Check production health and fix the riskiest issue"))
 ```
 
@@ -120,11 +122,11 @@ every(1d)
 // Handing over moves who continues; it does not undo what the agent may
 // already have done, which the host still reconciles.
 let q = request(@codex, "Is the build machine still overheating?")
-switch q->wait(~until=1h) {
-| Done(answer) => say(@alice, answer)
+let reply = switch q->wait(~until=1h) {
 | TimedOut => q->handOver(@alice)->wait
-| other => fail(other)
+| other => other
 }
+say(doc"ops#machines", reply?)
 ```
 
 ```norn
@@ -134,7 +136,7 @@ let rec push = () => {
   if judge("merged and verified live", ~about=report)? {
     Done(report)
   } else {
-    prActivity("acme/api#1439")->merge(after(2h))->wait?
+    prActivity("acme/api#1439")->or(after(2h))->wait?
     push()
   }
 }
@@ -143,8 +145,10 @@ push()?
 
 ## 4. Values and types
 
-Types are inferred with Hindley–Milner inference. Only built-ins carry
-written signatures, so ordinary programs need no annotations.
+Types are inferred with Hindley–Milner inference. Only built-ins and host
+interfaces carry written signatures, so ordinary programs need no annotations.
+The typing rules, built-in signatures and exhaustiveness checks are in
+[Types in Norn](types.md).
 
 | Type | Literals and notes |
 |---|---|
@@ -221,7 +225,7 @@ the program's author, and is authorized at the moment it is performed (§10).
 | `run(who, task, ~context=?, ~until=?) : outcome<report>` | yes | Starts a run of `who` on `task`, written in natural language, and waits for its final report. What `report` contains is host-defined: text, changes made, evidence. |
 | `request(who, text)`, `start(who, task) : request<'a>` | no | The same two calls, returning a handle instead of waiting. |
 | `wait(x, ~until=?) : outcome<'a>` | yes | Waits for a request, an event or a stream (§6.2). |
-| `cancel(r)`, `handOver(r, who)`, `status(r)` | no | Calls a request off, moves the same request to another participant with a new epoch (§12), or looks at its progress without waiting. |
+| `cancel(r)`, `handOver(r, who)`, `status(r)` | no | Calls a request off, moves the same request to another participant with a new epoch (§12), or looks at its progress without waiting: `status(r) : option<outcome<'a>>` is `None` while the request is open. |
 | `scope(f)` | — | Runs `f`. Every request started inside it is cancelled when `f` ends, loses an `any`, or passes its deadline (§12). |
 | `say(to, text) : unit` | no | Posts a message to a participant or a `ref`. |
 | `judge(condition, ~about=?) : outcome<bool>` | briefly | The host's judge model decides whether a condition written in natural language holds. |
@@ -259,7 +263,9 @@ language.
   - `message(ref, ~from=?)`
   - host app events
 
-  Streams compose with `merge`, `filter` and `map`. `wait(stream)` returns the
+  Streams compose with `merge` (two streams of one type, values kept), `or`
+  (any two streams; it only says that something happened), `filter` and
+  `map`. `never()` is a stream with no occurrences. `wait(stream)` returns the
   next occurrence after the program starts listening. `forEach` handles every
   occurrence until the program ends. A `forEach` declares what happens when
   occurrences arrive while the previous one is still being handled: run them
@@ -310,14 +316,8 @@ let followUp = (who, text, ~until, ~escalateTo) => {
   }
 }
 
-let rec mergeAll = (stream, others) =>
-  switch others {
-  | [] => stream
-  | [next, ...rest] => stream->merge(next)->mergeAll(rest)
-  }
-
-let schedule = (~every as period, ~on=[], task) =>
-  every(period)->mergeAll(on)->forEach(_ => run(@auto, task))
+let schedule = (~every as period, ~on=never(), task) =>
+  every(period)->or(on)->forEach(_ => run(@auto, task))
 
 let digest = (who, ~every as period) =>
   schedule(~every=period, `Tell ${who->show} what changed since they last looked; say nothing if nothing changed`)
