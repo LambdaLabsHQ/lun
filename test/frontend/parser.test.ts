@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MAX_NESTING, parse } from "../../src/frontend/index.ts";
 import {
-  binary, call, ctor, ctorPattern, id, int, item, labelled, parseErrors, parseOk, participant, pipe, str, strip, variable,
+  assertNoSharedObjects, binary, call, ctor, ctorPattern, id, int, item, labelled, parseErrors, parseOk, participant, pipe,
+  preorderKinds, str, strip, variable,
 } from "./helpers.ts";
+import { astFromJson, astToJson } from "../../src/frontend/index.ts";
 
 test("literals", () => {
   assert.deepEqual(item("42"), int("42"));
@@ -299,4 +301,20 @@ test(`nesting deeper than ${MAX_NESTING} levels is refused`, () => {
 test("CRLF line endings parse to the same tree", () => {
   const source = "let rec push = () => {\n  let r = run(@claude, task)?\n  if !judge(c, ~about=r)? {\n    push()\n  }\n}\npush()\n";
   assert.deepEqual(strip(parseOk(source.replaceAll("\n", "\r\n"))), strip(parseOk(source)));
+});
+
+test("no object appears twice in a tree, punned names and literal patterns included", () => {
+  const program = parseOk(`type t<'a> = A('a) | B
+let f = (~at, ~every as period, ~on=[], x) => {count, at}
+let g = ({version, state}) => ask(who, ~options, ~until)
+switch o {
+| (A | B) | C => @auto(~repo)
+| {name} => -1
+| () | "x" | -2 | 1.5 | true => [x, ...rest]
+| _ =>
+  let y = q->wait?
+  y
+}`);
+  assertNoSharedObjects(program);
+  assert.deepEqual(preorderKinds(program), preorderKinds(astFromJson(astToJson(program))));
 });

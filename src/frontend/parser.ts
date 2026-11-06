@@ -128,8 +128,9 @@ class Parser {
     return this.at("(") && !this.atLineStart();
   }
 
+  /** From the start of `start` to the end of the last token read. */
   private spanFrom(start: { span: A.Span }): A.Span {
-    return { start: start.span.start, end: this.previous().span.end };
+    return span(start.span.start, this.previous().span.end);
   }
 
   // Errors -----------------------------------------------------------------
@@ -185,8 +186,7 @@ class Parser {
         this.recover(start);
       }
     }
-    const end = this.peek().span.end;
-    return { kind: "Program", body, span: { start: { line: 1, column: 1, offset: 0 }, end } };
+    return { kind: "Program", body, span: span({ line: 1, column: 1, offset: 0 }, this.peek().span.end) };
   }
 
   /** Skips to the next line that starts in column 1 with something that can begin an item. */
@@ -306,8 +306,8 @@ class Parser {
     } else {
       this.next();
       params = [start.kind === "Underscore"
-        ? { kind: "WildcardPattern", span: start.span }
-        : { kind: "VarPattern", name: start.text, span: start.span }];
+        ? { kind: "WildcardPattern", span: spanOf(start) }
+        : { kind: "VarPattern", name: start.text, span: spanOf(start) }];
     }
     this.expect("=>", "after the parameters");
     const body = this.parseExpression();
@@ -324,7 +324,7 @@ class Parser {
     }
     this.next();
     const label = this.expectIdent("a label name after '~'");
-    let pattern: A.Pattern = { kind: "VarPattern", name: label.text, span: label.span };
+    let pattern: A.Pattern = { kind: "VarPattern", name: label.text, span: spanOf(label) };
     if (this.eat("as")) pattern = this.parsePattern();
     this.noAnnotation();
     let defaultValue: A.Expression | null = null;
@@ -350,7 +350,7 @@ class Parser {
       this.enter();
       links += 1;
       const right = this.parseBinary(precedence + 1);
-      left = { kind: "Binary", op: operator.kind as A.BinaryOperator, left, right, span: { start: left.span.start, end: right.span.end } };
+      left = { kind: "Binary", op: operator.kind as A.BinaryOperator, left, right, span: span(left.span.start, right.span.end) };
     }
     this.depth -= links;
     return left;
@@ -363,7 +363,7 @@ class Parser {
     this.enter();
     const operand = this.parseUnary();
     this.depth -= 1;
-    return { kind: "Unary", op: operator.kind, operand, span: { start: operator.span.start, end: operand.span.end } };
+    return { kind: "Unary", op: operator.kind, operand, span: span(operator.span.start, operand.span.end) };
   }
 
   /** An atom followed by calls `(…)`, field access `.f`, pipes `->f(…)` and `?`, read left to right. */
@@ -375,12 +375,12 @@ class Parser {
       if (this.atArguments()) {
         this.enter();
         const args = this.parseArguments();
-        expression = { kind: "Call", callee: expression, args, span: { start: expression.span.start, end: this.previous().span.end } };
+        expression = { kind: "Call", callee: expression, args, span: span(expression.span.start, this.previous().span.end) };
       } else if (token.kind === ".") {
         this.enter();
         this.next();
         const field = this.expectIdent("a field name after '.'");
-        expression = { kind: "FieldAccess", record: expression, field: field.text, span: { start: expression.span.start, end: field.span.end } };
+        expression = { kind: "FieldAccess", record: expression, field: field.text, span: span(expression.span.start, field.span.end) };
       } else if (token.kind === "->") {
         this.enter();
         this.next();
@@ -388,7 +388,7 @@ class Parser {
       } else if (token.kind === "?") {
         this.enter();
         this.next();
-        expression = { kind: "Try", operand: expression, span: { start: expression.span.start, end: token.span.end } };
+        expression = { kind: "Try", operand: expression, span: span(expression.span.start, token.span.end) };
       } else {
         break;
       }
@@ -404,14 +404,14 @@ class Parser {
     let callee: A.Expression;
     if (token.kind === "Ident") {
       this.next();
-      callee = { kind: "Identifier", name: token.text, span: token.span };
+      callee = { kind: "Identifier", name: token.text, span: spanOf(token) };
     } else if (token.kind === "(") {
       callee = this.parseParenthesized();
     } else {
       this.fail(`expected a function name after '->', found ${describe(token)}`);
     }
     const args = this.atArguments() ? this.parseArguments() : [];
-    return { kind: "Pipe", left, callee, args, span: { start: left.span.start, end: this.previous().span.end } };
+    return { kind: "Pipe", left, callee, args, span: span(left.span.start, this.previous().span.end) };
   }
 
   private parseArguments(): A.Argument[] {
@@ -431,7 +431,7 @@ class Parser {
     this.next();
     const label = this.expectIdent("a label name after '~'");
     if (!this.eat("=")) {
-      const value: A.Identifier = { kind: "Identifier", name: label.text, span: label.span };
+      const value: A.Identifier = { kind: "Identifier", name: label.text, span: spanOf(label) };
       return { kind: "LabelledArg", label: label.text, value, span: this.spanFrom(start) };
     }
     if (this.at("?")) this.fail("optional arguments ('~x=?') are not part of Norn v0");
@@ -444,36 +444,36 @@ class Parser {
     switch (token.kind) {
       case "Int":
         this.next();
-        return { kind: "IntLiteral", value: token.value, span: token.span };
+        return { kind: "IntLiteral", value: token.value, span: spanOf(token) };
       case "Float":
         this.next();
-        return { kind: "FloatLiteral", value: token.value, span: token.span };
+        return { kind: "FloatLiteral", value: token.value, span: spanOf(token) };
       case "String":
         this.next();
-        return { kind: "StringLiteral", value: token.value, span: token.span };
+        return { kind: "StringLiteral", value: token.value, span: spanOf(token) };
       case "TemplateFull":
         this.next();
-        return { kind: "TemplateLiteral", strings: [token.value], expressions: [], span: token.span };
+        return { kind: "TemplateLiteral", strings: [token.value], expressions: [], span: spanOf(token) };
       case "TemplateHead":
         return this.parseTemplate();
       case "true":
       case "false":
         this.next();
-        return { kind: "BoolLiteral", value: token.kind === "true", span: token.span };
+        return { kind: "BoolLiteral", value: token.kind === "true", span: spanOf(token) };
       case "Time":
         this.next();
-        return { kind: "TimeLiteral", value: token.text, epochMs: token.epochMs, offsetMinutes: token.offsetMinutes, span: token.span };
+        return { kind: "TimeLiteral", value: token.text, epochMs: token.epochMs, offsetMinutes: token.offsetMinutes, span: spanOf(token) };
       case "Duration":
         this.next();
-        return { kind: "DurationLiteral", amount: token.amount, unit: token.unit, span: token.span };
+        return { kind: "DurationLiteral", amount: token.amount, unit: token.unit, span: spanOf(token) };
       case "Ref":
         this.next();
-        return { kind: "RefLiteral", refKind: token.refKind, value: token.value, span: token.span };
+        return { kind: "RefLiteral", refKind: token.refKind, value: token.value, span: spanOf(token) };
       case "Participant":
         return this.parseParticipant();
       case "Ident":
         this.next();
-        return { kind: "Identifier", name: token.text, span: token.span };
+        return { kind: "Identifier", name: token.text, span: spanOf(token) };
       case "UIdent":
         return this.parseConstructor();
       case "(":
@@ -607,7 +607,7 @@ class Parser {
       const name = this.expectIdent("a field name");
       const value: A.Expression = this.eat(":")
         ? this.parseExpression()
-        : { kind: "Identifier", name: name.text, span: name.span };
+        : { kind: "Identifier", name: name.text, span: spanOf(name) };
       fields.push({ kind: "RecordField", name: name.text, value, span: this.spanFrom(name) });
       if (!this.eat(",")) break;
     }
@@ -669,7 +669,7 @@ class Parser {
     if (first === undefined || last === undefined) this.fail(`expected an expression after '=>', found ${describe(this.peek())}`);
     const value: A.Expression = body.length === 1 && first.kind !== "Let" && first.kind !== "LetRec"
       ? first
-      : { kind: "Block", body, span: { start: first.span.start, end: last.span.end } };
+      : { kind: "Block", body, span: span(first.span.start, last.span.end) };
     return { kind: "Case", pattern, guard, body: value, span: this.spanFrom(bar) };
   }
 
@@ -698,10 +698,10 @@ class Parser {
     switch (token.kind) {
       case "Underscore":
         this.next();
-        return { kind: "WildcardPattern", span: token.span };
+        return { kind: "WildcardPattern", span: spanOf(token) };
       case "Ident":
         this.next();
-        return { kind: "VarPattern", name: token.text, span: token.span };
+        return { kind: "VarPattern", name: token.text, span: spanOf(token) };
       case "Int":
       case "Float":
       case "String":
@@ -736,23 +736,23 @@ class Parser {
     if (start.kind === "-") {
       const number = this.peek();
       if (number.kind === "Int") {
-        literal = { kind: "IntLiteral", value: number.value === "0" ? "0" : `-${number.value}`, span: { start: start.span.start, end: number.span.end } };
+        literal = { kind: "IntLiteral", value: number.value === "0" ? "0" : `-${number.value}`, span: span(start.span.start, number.span.end) };
       } else if (number.kind === "Float") {
-        literal = { kind: "FloatLiteral", value: -number.value, span: { start: start.span.start, end: number.span.end } };
+        literal = { kind: "FloatLiteral", value: -number.value, span: span(start.span.start, number.span.end) };
       } else {
         this.fail(`expected a number after '-' in a pattern, found ${describe(number)}`);
       }
       this.next();
     } else if (start.kind === "Int") {
-      literal = { kind: "IntLiteral", value: start.value, span: start.span };
+      literal = { kind: "IntLiteral", value: start.value, span: spanOf(start) };
     } else if (start.kind === "Float") {
-      literal = { kind: "FloatLiteral", value: start.value, span: start.span };
+      literal = { kind: "FloatLiteral", value: start.value, span: spanOf(start) };
     } else if (start.kind === "String") {
-      literal = { kind: "StringLiteral", value: start.value, span: start.span };
+      literal = { kind: "StringLiteral", value: start.value, span: spanOf(start) };
     } else {
-      literal = { kind: "BoolLiteral", value: start.kind === "true", span: start.span };
+      literal = { kind: "BoolLiteral", value: start.kind === "true", span: spanOf(start) };
     }
-    return { kind: "LiteralPattern", literal, span: literal.span };
+    return { kind: "LiteralPattern", literal, span: spanOf(literal) };
   }
 
   private parseConstructorPattern(): A.ConstructorPattern {
@@ -773,8 +773,7 @@ class Parser {
   private parseParenthesizedPattern(): A.Pattern {
     const open = this.next();
     if (this.eat(")")) {
-      const span = this.spanFrom(open);
-      return { kind: "LiteralPattern", literal: { kind: "UnitLiteral", span }, span };
+      return { kind: "LiteralPattern", literal: { kind: "UnitLiteral", span: this.spanFrom(open) }, span: this.spanFrom(open) };
     }
     const first = this.parsePattern();
     if (this.eat(")")) return first;
@@ -814,7 +813,7 @@ class Parser {
       const name = this.expectIdent("a field name");
       const pattern: A.Pattern = this.eat(":")
         ? this.parsePattern()
-        : { kind: "VarPattern", name: name.text, span: name.span };
+        : { kind: "VarPattern", name: name.text, span: spanOf(name) };
       fields.push({ kind: "FieldPattern", name: name.text, pattern, span: this.spanFrom(name) });
       if (!this.eat(",")) break;
     }
@@ -839,7 +838,7 @@ class Parser {
         const variable = this.peek();
         if (variable.kind !== "TypeVar") this.fail(`expected a type variable such as 'a, found ${describe(variable)}`);
         this.next();
-        params.push({ kind: "TypeVar", name: variable.text.slice(1), span: variable.span });
+        params.push({ kind: "TypeVar", name: variable.text.slice(1), span: spanOf(variable) });
         if (!this.eat(",")) break;
       }
       this.closeList(">", open, "a type variable");
@@ -900,7 +899,7 @@ class Parser {
     let type: A.TypeExpression;
     if (token.kind === "TypeVar") {
       this.next();
-      type = { kind: "TypeVar", name: token.text.slice(1), span: token.span };
+      type = { kind: "TypeVar", name: token.text.slice(1), span: spanOf(token) };
     } else if (token.kind === "Ident") {
       this.next();
       const args: A.TypeExpression[] = [];
@@ -933,6 +932,18 @@ class Parser {
     this.depth -= 1;
     return type;
   }
+}
+
+/**
+ * A span of fresh objects. No object appears twice in a tree: every node,
+ * span and position is its own, as in a tree read back from JSON.
+ */
+function span(start: A.Pos, end: A.Pos): A.Span {
+  return { start: { ...start }, end: { ...end } };
+}
+
+function spanOf(node: { span: A.Span }): A.Span {
+  return span(node.span.start, node.span.end);
 }
 
 function describe(token: Token): string {

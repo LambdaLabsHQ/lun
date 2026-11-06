@@ -131,6 +131,11 @@ Conventions:
 - **Not in the tree:** parentheses leave no node, and a parenthesized
   expression keeps the span of what is inside them. Comments are not in the
   tree either.
+- **No shared objects.** No object appears twice in a tree. Every node, list,
+  span and position is a fresh object, even for punned names such as
+  `{count}` or `~until`, as in a tree read back from JSON. A walk that skips
+  objects it has seen, such as one that numbers nodes, therefore gives the
+  same result for a fresh parse and for a JSON round trip.
 
 ## Nodes
 

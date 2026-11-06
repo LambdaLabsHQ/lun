@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { test } from "node:test";
 import { NODE_FIELDS, astFromJson, astToJson, type AstNode, type Pos } from "../../src/frontend/index.ts";
-import { parseOk } from "./helpers.ts";
+import { assertNoSharedObjects, parseOk, preorderKinds } from "./helpers.ts";
 
 const root = new URL("../../", import.meta.url);
 const read = (path: string) => readFileSync(new URL(path, root), "utf8");
@@ -25,11 +25,14 @@ test("the examples and the standard library exist", () => {
 });
 
 for (const path of programs) {
-  test(`${path} parses, and its tree survives a JSON round trip`, () => {
+  test(`${path} parses to a tree of distinct objects that survives a JSON round trip`, () => {
     const source = read(path);
     const program = parseOk(source);
     assert.ok(program.body.length > 0);
-    assert.deepEqual(astFromJson(astToJson(program)), program);
+    const roundTrip = astFromJson(astToJson(program));
+    assert.deepEqual(roundTrip, program);
+    assertNoSharedObjects(program);
+    assert.deepEqual(preorderKinds(program), preorderKinds(roundTrip));
     checkPositions(program, source, path);
   });
 }

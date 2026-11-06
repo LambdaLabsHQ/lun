@@ -46,3 +46,34 @@ export const participant = (name: string, instance: string | null = null, args: 
   instance,
   args,
 });
+
+/**
+ * Fails if any object, whether a node, a list, a span or a position, can be
+ * reached twice from the root. A tree read back from JSON never shares objects,
+ * and the runtime numbers nodes by object identity, so a parsed tree must not
+ * share them either.
+ */
+export function assertNoSharedObjects(root: unknown): void {
+  const seen = new Set<object>();
+  const visit = (value: unknown, path: string): void => {
+    if (typeof value !== "object" || value === null) return;
+    assert.ok(!seen.has(value), `${path} is an object that also appears elsewhere in the tree`);
+    seen.add(value);
+    for (const [key, child] of Object.entries(value)) visit(child, Array.isArray(value) ? `${path}[${key}]` : `${path}.${key}`);
+  };
+  visit(root, "program");
+}
+
+/** Node kinds in pre-order, visiting each object once, as the runtime numbers them. */
+export function preorderKinds(root: unknown): string[] {
+  const seen = new Set<object>();
+  const kinds: string[] = [];
+  const visit = (value: unknown): void => {
+    if (typeof value !== "object" || value === null || seen.has(value)) return;
+    seen.add(value);
+    if ("kind" in value && typeof value.kind === "string") kinds.push(value.kind);
+    for (const child of Object.values(value)) visit(child);
+  };
+  visit(root);
+  return kinds;
+}
