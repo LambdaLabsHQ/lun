@@ -96,7 +96,7 @@ test("never permits a deadline and empty alternatives cannot produce a spurious 
     await runtime.create("p"); await host.pump(runtime);
     await host.advanceTo(hour - 1); assert.equal(await host.pump(runtime), 0);
     await host.advanceTo(hour); await host.pump(runtime);
-    assert.deepEqual(((await store.load("p"))!.snapshot as { control: unknown }).control, { kind: "done", value: variant("TimedOut") });
+    assert.deepEqual(((await store.load("p"))!.snapshot as { control: unknown }).control, { kind: "failed", outcome: variant("TimedOut") });
   } finally { await store.close(); }
 });
 

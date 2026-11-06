@@ -108,6 +108,11 @@ export class Runtime {
     return committed?.checkpoint ?? null; // A loser reloads; it never performs the abandoned effect.
   }
   private checkpoint(machine: Machine, now: number): CheckpointChange {
+    if (machine.control.kind === "report") {
+      const reported = machine.control.outcome;
+      resume(machine, unit, now);
+      return { status: "ready", snapshot: json(machine), effects: [{ operation: "execution.handler_failed", arguments: json(reported), kind: "notification" }] };
+    }
     if (machine.control.kind === "done") return { status: "completed", snapshot: json(machine) };
     if (machine.control.kind === "failed") return {
       status: machine.control.outcome.type === "variant" && machine.control.outcome.name === "Revoked" ? "revoked" : "failed",
