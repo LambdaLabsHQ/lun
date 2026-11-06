@@ -1,7 +1,10 @@
 # Norn language spec (draft v0)
 
-> Status: design draft, 2026-11-06. Nothing here is implemented, and
-> everything is open to change. The language sections were drafted by Claude.
+> Status: design draft, 2026-11-06, open to change. A local reference
+> implementation (a parser, a durable evaluator and a simulated host) runs
+> four of the §3 examples from source
+> ([reference runtime](reference-runtime.md)). No production host implements
+> it yet. The language sections were drafted by Claude.
 > The runtime protocol (§11) is based on research by Codex
 > ([runtime research](research/runtime.md)). The formal model (§12) draws on
 > two surveys ([models](research/models.md),
@@ -128,12 +131,14 @@ switch q->wait(~until=1h) {
 // Keep going until a judged condition holds.
 let rec push = () => {
   let report = run(@claude, "Move #1439 forward until it is merged and verified live")?
-  if !judge("merged and verified live", ~about=report)? {
+  if judge("merged and verified live", ~about=report)? {
+    Done(report)
+  } else {
     prActivity("acme/api#1439")->merge(after(2h))->wait?
     push()
   }
 }
-push()
+push()?
 ```
 
 ## 4. Values and types
@@ -190,7 +195,11 @@ Norn is a subset of ReScript with a few additions. Source files use the `.norn` 
   - postfix `?` on an `outcome`, `option` or `result`, as in Rust. On anything
     but `Done`, `Some` or `Ok`, the enclosing function returns that value at
     once. At the top of a program it ends the program, and the author is told
-    (§10).
+    (§10). If `e : outcome<'a>`, then `e?` has type `'a`, and the enclosing
+    function must itself return some `outcome<'b>`: the other cases carry no
+    `'a`, so they are returned unchanged. `option` and `result` work the same
+    way, and a `result` keeps its error type. That is why the `push` loop in §3
+    ends with `Done(report)`, not `()`.
 - **No function colouring.** There is no `async` or `await` keyword. A built-in
   that waits may suspend, and so may any function that calls one.
 - **Left out of v0:**
@@ -217,6 +226,7 @@ the program's author, and is authorized at the moment it is performed (§10).
 | `say(to, text) : unit` | no | Posts a message to a participant or a `ref`. |
 | `judge(condition, ~about=?) : outcome<bool>` | briefly | The host's judge model decides whether a condition written in natural language holds. |
 | `now() : time` | no | The time the program resumed. It is stable within one step. |
+| `show(x) : string` | no | Renders a value as text for people: a time in ISO 8601, a duration as `1h` or `1d`, a participant as `@alice`, a variant by its name. |
 | `fail(o) : 'b` | no | Ends the program with an outcome other than success (§10). |
 
 Planned next, not in v0: structured child programs (`spawn` and `join`) for
@@ -226,9 +236,14 @@ asking several participants at once.
 
 These are two different kinds of waiting, kept apart on purpose.
 
+Which facts and streams exist is up to the host (§11). The ones below are
+examples from the xMatrix host; only `every` and `after` are part of the
+language.
+
 - **`event<'a>` is a fact that may already hold.** Examples:
   - `merged("owner/repo#n")`
   - `released(Beta, ~containing=pr)`
+  - `machineUpdated(~machine="win-builder", ~atLeast=version)`
   - `replied(messageRef, ~by=?)`
   - `runEnded(runRef)`
 
@@ -236,7 +251,8 @@ These are two different kinds of waiting, kept apart on purpose.
   fact and registers the wait as one step, so a change cannot slip between
   observing "false" and starting to wait.
 - **`stream<'a>` is occurrences that keep happening.** Examples:
-  - `every(d)` and `after(d)`
+  - `every(d)`, and `after(x)`, which happens once, at a time or after a
+    duration from now
   - `ciFailed("owner/repo")`
   - `prActivity("owner/repo#n")`
   - `docChanged(ref)`
@@ -275,7 +291,7 @@ Higher-level features are functions, not product features:
 
 ```norn
 let remind = (who, text, ~at) => {
-  at->sleepUntil?
+  after(at)->wait?
   ask(who, text)
 }
 
@@ -294,11 +310,17 @@ let followUp = (who, text, ~until, ~escalateTo) => {
   }
 }
 
+let rec mergeAll = (stream, others) =>
+  switch others {
+  | [] => stream
+  | [next, ...rest] => stream->merge(next)->mergeAll(rest)
+  }
+
 let schedule = (~every as period, ~on=[], task) =>
   every(period)->mergeAll(on)->forEach(_ => run(@auto, task))
 
 let digest = (who, ~every as period) =>
-  schedule(~every=period, `Tell ${who->name} what changed since they last looked; say nothing if nothing changed`)
+  schedule(~every=period, `Tell ${who->show} what changed since they last looked; say nothing if nothing changed`)
 ```
 
 Common features of agent products reduce to these functions:
@@ -380,20 +402,23 @@ The language fixes a portable kernel. Hosts implement a contract.
    whether running instances drain, are cancelled, or are explicitly
    migrated. It never runs both versions by accident.
 
-**Conformance cases** (to be implemented, not yet passing):
+**Conformance cases.** The reference runtime has local checks for the cases
+marked ✓, against its SQLite store and simulated host. A host-independent
+suite that every host runs is still to be written.
 
-- a person replies after a long wait and a host restart;
-- a fact that already held before the wait;
-- duplicate events and concurrent workers;
-- a crash between recording an intent and dispatching it;
-- a crash between dispatch and receipt;
-- a reply racing a timeout or a deleted source;
+- ✓ a person replies after a long wait and a host restart;
+- ✓ a fact that already held before the wait;
+- ✓ concurrent workers; duplicate events are not checked yet;
+- ✓ a crash between recording an intent and dispatching it;
+- ✓ a crash between dispatch and receipt;
+- ✓ a reply racing a timeout; a deleted source is not checked yet;
 - cancellation while an agent is already running;
-- permission withdrawn while suspended;
-- a definition or ABI change;
+- ✓ permission withdrawn while suspended;
+- ✓ a definition or ABI change is refused on resumption; migration is not
+  implemented;
 - bursts of stream events;
-- pure loops that never wait;
-- handing over a request without duplicating its rights.
+- ✓ pure loops that never wait;
+- ✓ handing over a request without duplicating its rights.
 
 ## 12. The formal model underneath (proposed)
 

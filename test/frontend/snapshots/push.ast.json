@@ -55,41 +55,54 @@
                   {
                     "kind": "If",
                     "condition": {
-                      "kind": "Unary",
-                      "op": "!",
+                      "kind": "Try",
                       "operand": {
-                        "kind": "Try",
-                        "operand": {
-                          "kind": "Call",
-                          "callee": {
-                            "kind": "Identifier",
-                            "name": "judge",
-                            "span": {"start": {"line": 4, "column": 7, "offset": 163}, "end": {"line": 4, "column": 12, "offset": 168}}
-                          },
-                          "args": [
-                            {
-                              "kind": "StringLiteral",
-                              "value": "merged and verified live",
-                              "span": {"start": {"line": 4, "column": 13, "offset": 169}, "end": {"line": 4, "column": 39, "offset": 195}}
-                            },
-                            {
-                              "kind": "LabelledArg",
-                              "label": "about",
-                              "value": {
-                                "kind": "Identifier",
-                                "name": "report",
-                                "span": {"start": {"line": 4, "column": 48, "offset": 204}, "end": {"line": 4, "column": 54, "offset": 210}}
-                              },
-                              "span": {"start": {"line": 4, "column": 41, "offset": 197}, "end": {"line": 4, "column": 54, "offset": 210}}
-                            }
-                          ],
-                          "span": {"start": {"line": 4, "column": 7, "offset": 163}, "end": {"line": 4, "column": 55, "offset": 211}}
+                        "kind": "Call",
+                        "callee": {
+                          "kind": "Identifier",
+                          "name": "judge",
+                          "span": {"start": {"line": 4, "column": 6, "offset": 162}, "end": {"line": 4, "column": 11, "offset": 167}}
                         },
-                        "span": {"start": {"line": 4, "column": 7, "offset": 163}, "end": {"line": 4, "column": 56, "offset": 212}}
+                        "args": [
+                          {
+                            "kind": "StringLiteral",
+                            "value": "merged and verified live",
+                            "span": {"start": {"line": 4, "column": 12, "offset": 168}, "end": {"line": 4, "column": 38, "offset": 194}}
+                          },
+                          {
+                            "kind": "LabelledArg",
+                            "label": "about",
+                            "value": {
+                              "kind": "Identifier",
+                              "name": "report",
+                              "span": {"start": {"line": 4, "column": 47, "offset": 203}, "end": {"line": 4, "column": 53, "offset": 209}}
+                            },
+                            "span": {"start": {"line": 4, "column": 40, "offset": 196}, "end": {"line": 4, "column": 53, "offset": 209}}
+                          }
+                        ],
+                        "span": {"start": {"line": 4, "column": 6, "offset": 162}, "end": {"line": 4, "column": 54, "offset": 210}}
                       },
-                      "span": {"start": {"line": 4, "column": 6, "offset": 162}, "end": {"line": 4, "column": 56, "offset": 212}}
+                      "span": {"start": {"line": 4, "column": 6, "offset": 162}, "end": {"line": 4, "column": 55, "offset": 211}}
                     },
                     "thenBranch": {
+                      "kind": "Block",
+                      "body": [
+                        {
+                          "kind": "Constructor",
+                          "name": "Done",
+                          "args": [
+                            {
+                              "kind": "Identifier",
+                              "name": "report",
+                              "span": {"start": {"line": 5, "column": 10, "offset": 223}, "end": {"line": 5, "column": 16, "offset": 229}}
+                            }
+                          ],
+                          "span": {"start": {"line": 5, "column": 5, "offset": 218}, "end": {"line": 5, "column": 17, "offset": 230}}
+                        }
+                      ],
+                      "span": {"start": {"line": 4, "column": 56, "offset": 212}, "end": {"line": 6, "column": 4, "offset": 234}}
+                    },
+                    "elseBranch": {
                       "kind": "Block",
                       "body": [
                         {
@@ -103,21 +116,21 @@
                                 "callee": {
                                   "kind": "Identifier",
                                   "name": "prActivity",
-                                  "span": {"start": {"line": 5, "column": 5, "offset": 219}, "end": {"line": 5, "column": 15, "offset": 229}}
+                                  "span": {"start": {"line": 7, "column": 5, "offset": 246}, "end": {"line": 7, "column": 15, "offset": 256}}
                                 },
                                 "args": [
                                   {
                                     "kind": "StringLiteral",
                                     "value": "acme/api#1439",
-                                    "span": {"start": {"line": 5, "column": 16, "offset": 230}, "end": {"line": 5, "column": 31, "offset": 245}}
+                                    "span": {"start": {"line": 7, "column": 16, "offset": 257}, "end": {"line": 7, "column": 31, "offset": 272}}
                                   }
                                 ],
-                                "span": {"start": {"line": 5, "column": 5, "offset": 219}, "end": {"line": 5, "column": 32, "offset": 246}}
+                                "span": {"start": {"line": 7, "column": 5, "offset": 246}, "end": {"line": 7, "column": 32, "offset": 273}}
                               },
                               "callee": {
                                 "kind": "Identifier",
                                 "name": "merge",
-                                "span": {"start": {"line": 5, "column": 34, "offset": 248}, "end": {"line": 5, "column": 39, "offset": 253}}
+                                "span": {"start": {"line": 7, "column": 34, "offset": 275}, "end": {"line": 7, "column": 39, "offset": 280}}
                               },
                               "args": [
                                 {
@@ -125,68 +138,71 @@
                                   "callee": {
                                     "kind": "Identifier",
                                     "name": "after",
-                                    "span": {"start": {"line": 5, "column": 40, "offset": 254}, "end": {"line": 5, "column": 45, "offset": 259}}
+                                    "span": {"start": {"line": 7, "column": 40, "offset": 281}, "end": {"line": 7, "column": 45, "offset": 286}}
                                   },
                                   "args": [
                                     {
                                       "kind": "DurationLiteral",
                                       "amount": "2",
                                       "unit": "h",
-                                      "span": {"start": {"line": 5, "column": 46, "offset": 260}, "end": {"line": 5, "column": 48, "offset": 262}}
+                                      "span": {"start": {"line": 7, "column": 46, "offset": 287}, "end": {"line": 7, "column": 48, "offset": 289}}
                                     }
                                   ],
-                                  "span": {"start": {"line": 5, "column": 40, "offset": 254}, "end": {"line": 5, "column": 49, "offset": 263}}
+                                  "span": {"start": {"line": 7, "column": 40, "offset": 281}, "end": {"line": 7, "column": 49, "offset": 290}}
                                 }
                               ],
-                              "span": {"start": {"line": 5, "column": 5, "offset": 219}, "end": {"line": 5, "column": 50, "offset": 264}}
+                              "span": {"start": {"line": 7, "column": 5, "offset": 246}, "end": {"line": 7, "column": 50, "offset": 291}}
                             },
                             "callee": {
                               "kind": "Identifier",
                               "name": "wait",
-                              "span": {"start": {"line": 5, "column": 52, "offset": 266}, "end": {"line": 5, "column": 56, "offset": 270}}
+                              "span": {"start": {"line": 7, "column": 52, "offset": 293}, "end": {"line": 7, "column": 56, "offset": 297}}
                             },
                             "args": [],
-                            "span": {"start": {"line": 5, "column": 5, "offset": 219}, "end": {"line": 5, "column": 56, "offset": 270}}
+                            "span": {"start": {"line": 7, "column": 5, "offset": 246}, "end": {"line": 7, "column": 56, "offset": 297}}
                           },
-                          "span": {"start": {"line": 5, "column": 5, "offset": 219}, "end": {"line": 5, "column": 57, "offset": 271}}
+                          "span": {"start": {"line": 7, "column": 5, "offset": 246}, "end": {"line": 7, "column": 57, "offset": 298}}
                         },
                         {
                           "kind": "Call",
                           "callee": {
                             "kind": "Identifier",
                             "name": "push",
-                            "span": {"start": {"line": 6, "column": 5, "offset": 276}, "end": {"line": 6, "column": 9, "offset": 280}}
+                            "span": {"start": {"line": 8, "column": 5, "offset": 303}, "end": {"line": 8, "column": 9, "offset": 307}}
                           },
                           "args": [],
-                          "span": {"start": {"line": 6, "column": 5, "offset": 276}, "end": {"line": 6, "column": 11, "offset": 282}}
+                          "span": {"start": {"line": 8, "column": 5, "offset": 303}, "end": {"line": 8, "column": 11, "offset": 309}}
                         }
                       ],
-                      "span": {"start": {"line": 4, "column": 57, "offset": 213}, "end": {"line": 7, "column": 4, "offset": 286}}
+                      "span": {"start": {"line": 6, "column": 10, "offset": 240}, "end": {"line": 9, "column": 4, "offset": 313}}
                     },
-                    "elseBranch": null,
-                    "span": {"start": {"line": 4, "column": 3, "offset": 159}, "end": {"line": 7, "column": 4, "offset": 286}}
+                    "span": {"start": {"line": 4, "column": 3, "offset": 159}, "end": {"line": 9, "column": 4, "offset": 313}}
                   }
                 ],
-                "span": {"start": {"line": 2, "column": 22, "offset": 67}, "end": {"line": 8, "column": 2, "offset": 288}}
+                "span": {"start": {"line": 2, "column": 22, "offset": 67}, "end": {"line": 10, "column": 2, "offset": 315}}
               },
-              "span": {"start": {"line": 2, "column": 16, "offset": 61}, "end": {"line": 8, "column": 2, "offset": 288}}
+              "span": {"start": {"line": 2, "column": 16, "offset": 61}, "end": {"line": 10, "column": 2, "offset": 315}}
             },
-            "span": {"start": {"line": 2, "column": 9, "offset": 54}, "end": {"line": 8, "column": 2, "offset": 288}}
+            "span": {"start": {"line": 2, "column": 9, "offset": 54}, "end": {"line": 10, "column": 2, "offset": 315}}
           }
         ],
-        "span": {"start": {"line": 2, "column": 1, "offset": 46}, "end": {"line": 8, "column": 2, "offset": 288}}
+        "span": {"start": {"line": 2, "column": 1, "offset": 46}, "end": {"line": 10, "column": 2, "offset": 315}}
       },
       {
-        "kind": "Call",
-        "callee": {
-          "kind": "Identifier",
-          "name": "push",
-          "span": {"start": {"line": 9, "column": 1, "offset": 289}, "end": {"line": 9, "column": 5, "offset": 293}}
+        "kind": "Try",
+        "operand": {
+          "kind": "Call",
+          "callee": {
+            "kind": "Identifier",
+            "name": "push",
+            "span": {"start": {"line": 11, "column": 1, "offset": 316}, "end": {"line": 11, "column": 5, "offset": 320}}
+          },
+          "args": [],
+          "span": {"start": {"line": 11, "column": 1, "offset": 316}, "end": {"line": 11, "column": 7, "offset": 322}}
         },
-        "args": [],
-        "span": {"start": {"line": 9, "column": 1, "offset": 289}, "end": {"line": 9, "column": 7, "offset": 295}}
+        "span": {"start": {"line": 11, "column": 1, "offset": 316}, "end": {"line": 11, "column": 8, "offset": 323}}
       }
     ],
-    "span": {"start": {"line": 1, "column": 1, "offset": 0}, "end": {"line": 10, "column": 1, "offset": 296}}
+    "span": {"start": {"line": 1, "column": 1, "offset": 0}, "end": {"line": 12, "column": 1, "offset": 324}}
   }
 }
