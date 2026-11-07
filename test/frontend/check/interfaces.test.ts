@@ -118,3 +118,21 @@ test("the reference host file is itself a valid interface, and not a valid progr
   assert.ok(asProgram.diagnostics.length > 0);
   assert.ok(asProgram.diagnostics.every((d) => d.code === "interface-only" || d.code === "duplicate-type"), describe(asProgram.diagnostics));
 });
+
+test("a host's report takes no type parameters, and an external in a program is one error", () => {
+  assert.deepEqual(readInterface("type report<'a> = {text: 'a}", "r.norn").diagnostics.map((d) => d.message), [
+    "expected no type parameters for report, found 1: report is what run and start return, as in outcome<report>",
+  ]);
+  assert.deepEqual(checkSource("external now2: () => time\nlet t = now2()").diagnostics.map((d) => d.code), ["interface-only"]);
+});
+
+test("field names that differ across the host's records let a helper read a report's text", () => {
+  const result = checkSource(`let summary = r => r.text
+let tell = m => say(m.from, m.body)
+switch run(@auto, "x") {
+| Done(r) => say(@bob, summary(r))
+| other => fail(other)
+}`);
+  assert.deepEqual(result.diagnostics, [], describe(result.diagnostics));
+  assert.deepEqual(result.bindings.map(({ name, type }) => `${name}: ${type}`), ["summary: (report) => string", "tell: (message) => unit"]);
+});

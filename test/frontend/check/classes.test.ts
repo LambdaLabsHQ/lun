@@ -116,3 +116,18 @@ test("two classes with no common type conflict", () => {
   // ordered and deadline meet in deadline.
   assert.equal(typeOf("let f = d => { ignore(d < d); after(d) }", "f"), "('a) => stream<time> where 'a: deadline");
 });
+
+test("equality: a request compares as a handle, an event or a stream never, and a participant's arguments must compare", () => {
+  assert.equal(typeOf("let r = request(@codex, \"q\")\nlet same = r == r", "same"), "bool");
+  assert.equal(
+    message("let s = every(1d)->map(t => 1)\nignore(s == s)", "not-comparable"),
+    "expected a type without functions for the left operand of ==, found stream<int>: events and streams cannot be compared, since they may hold functions, as map and filter do",
+  );
+  assert.equal(message("type w = {s: event<pr>}\nlet a = {s: merged(\"x\")}\nignore(a == a)", "not-comparable").startsWith("expected a type without functions for the left operand of ==, found w, which holds a function"), true);
+  // A source whose kind is not known yet, once compared, is a request.
+  assert.equal(typeOf("let same = (a, b) => a == b\nlet w = x => {\n  ignore(same(x, x))\n  wait(x)\n}", "w"), "(request<'a>) => outcome<'a>");
+  assert.equal(
+    message("let p = @auto(~f=(x => x))\nignore(p == p)", "not-comparable"),
+    "expected a type without functions for ~f of a participant, found ('a) => 'a: functions cannot be compared",
+  );
+});

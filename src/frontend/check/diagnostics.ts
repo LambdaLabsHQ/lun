@@ -62,7 +62,7 @@ export const CODES = {
   "non-exhaustive": "a switch that does not handle every case",
   "refutable-pattern": "a let or parameter pattern that does not match every value",
   "unreachable-case": "a case that can never match, because earlier cases cover it",
-  "dropped-outcome": "an outcome used as a statement before the last, or bound to _",
+  "dropped-outcome": "an outcome used as a statement before the last, bound to _, or given to a generic function that drops it",
   "unused-outcome": "a let that binds an outcome to a name that is never used",
   "interface-only": "an external or an abstract type in a program",
   "interface-item": "something other than a type or an external in a host interface file",
@@ -121,14 +121,16 @@ export function closest(name: string, candidates: Iterable<string>): string | nu
   return best !== null && bestDistance * 3 <= Math.max(name.length, best.length) ? best : null;
 }
 
+/** Edits between two names, where swapping two neighbouring letters is one edit, as in `wiat` for `wait`. */
 function editDistance(a: string, b: string): number {
-  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  const rows = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
   for (let i = 1; i <= a.length; i += 1) {
-    const current = [i];
     for (let j = 1; j <= b.length; j += 1) {
-      current[j] = Math.min(previous[j]! + 1, current[j - 1]! + 1, previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let best = Math.min(rows[i - 1]![j]! + 1, rows[i]![j - 1]! + 1, rows[i - 1]![j - 1]! + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) best = Math.min(best, rows[i - 2]![j - 2]! + 1);
+      rows[i]![j] = best;
     }
-    previous = current;
   }
-  return previous[b.length]!;
+  return rows[a.length]![b.length]!;
 }

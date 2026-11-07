@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type * as A from "../ast.ts";
+import { STACK_EXHAUSTED } from "../diagnostics.ts";
 import { parse } from "../parser.ts";
 import type { CheckDiagnostic } from "./diagnostics.ts";
 import { checkProgram, loadLibrary, type CheckResult, type Library } from "./infer.ts";
@@ -70,7 +71,7 @@ export function checkSource(source: string, options: { host?: HostInterface; std
   return { ...checkProgram(parsed.program, { host, std }), program: parsed.program };
 }
 
-/** A syntax error as a checker diagnostic. */
+/** A syntax error as a checker diagnostic; running out of stack while parsing is `too-deep`, as while checking. */
 export function syntax(diagnostic: { message: string; span: A.Span }): CheckDiagnostic {
-  return { severity: "error", code: "syntax", message: diagnostic.message, span: diagnostic.span };
+  return { severity: "error", code: diagnostic.message === STACK_EXHAUSTED ? "too-deep" : "syntax", message: diagnostic.message, span: diagnostic.span };
 }

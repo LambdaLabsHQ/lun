@@ -14,13 +14,13 @@
 import type * as A from "../ast.ts";
 import { STACK_EXHAUSTED, isStackExhausted } from "../diagnostics.ts";
 import { askType, t } from "./builtins.ts";
-import { TypeTable, declareTypes, type CtorInfo, type TypeInfo } from "./declarations.ts";
+import { TypeReader, TypeTable, declareTypes, externalType, type CtorInfo, type TypeInfo } from "./declarations.ts";
 import { both, closest, count, either, ordinal, sortDiagnostics, type CheckDiagnostic, type Code } from "./diagnostics.ts";
 import { effectsSummary, type EffectSummary } from "./effects.ts";
 import { analyzeMatch, type Row } from "./exhaustiveness.ts";
 import { binding, type HostInterface, type ValueBinding } from "./interface.ts";
 import {
-  Namer, UnifyError, con, fun, generalize, instantiate, isOutcome, newVar, printScheme, printType, resolve, sameShape,
+  GENERIC, Namer, SOURCE, UnifyError, con, fun, generalize, instantiate, isOutcome, newVar, printScheme, printType, resolve, sameShape,
   substitute, tuple, unify, type Clash, type ClassName, type TFun, type TLabel, type Type,
 } from "./types.ts";
 
@@ -203,6 +203,8 @@ export class Checker {
   /** The node being checked, for the `too-deep` diagnostic. */
   private cursor: { span: A.Span } | null = null;
   private stdReported = false;
+  /** The names that the lets being read are defining, for the hint to write let rec. */
+  private readonly defining: string[] = [];
 
   constructor(host: HostInterface, std: Library | null) {
     this.host = host;
@@ -263,11 +265,23 @@ export class Checker {
     switch (clash.kind) {
       case "class": {
         const offending = printType(clash.type, namer);
-        const { code, members, hint } = CLASSES[clash.cls];
+        const { code, members } = CLASSES[clash.cls];
+        let { hint } = CLASSES[clash.cls];
         const holder = resolve(clash.inner);
-        const inner = clash.cls !== "equality" ? ""
-          : holder.tag === "con" ? (holder === resolve(clash.type) ? ", which holds a function" : `, which contains ${printType(holder, namer)}, which holds a function`)
-          : holder !== resolve(clash.type) ? `, which contains the function type ${printType(holder, namer)}` : "";
+        let inner = "";
+        if (clash.cls === "equality") {
+          if (holder.tag === "con" && holder.name === SOURCE) {
+            inner = holder === resolve(clash.type) ? "" : `, which contains ${printType(holder, namer)}`;
+            hint = ": events and streams cannot be compared, since they may hold functions, as map and filter do";
+          } else if (holder.tag === "con") {
+            inner = holder === resolve(clash.type) ? ", which holds a function" : `, which contains ${printType(holder, namer)}, which holds a function`;
+          } else if (holder !== resolve(clash.type)) {
+            inner = `, which contains the function type ${printType(holder, namer)}`;
+          }
+        }
+        if (clash.cls === "discardable" && clash.dropped !== undefined) {
+          hint = `: a value of this type is dropped at ${position(clash.dropped)} without being looked at; handle the outcome with switch, ? or fail, or set it aside with ignore(…)`;
+        }
         // A part of a larger type, such as the result of a function passed as an argument: name the whole too.
         const whole = resolve(found) !== resolve(clash.type) && resolve(expected) !== resolve(clash.type) ? `, in ${printType(found, namer)}` : "";
         this.error(code, `expected ${members}${where}, found ${offending}${inner}${whole}${hint}`, span, { expected: members, found: offending });
@@ -289,7 +303,7 @@ export class Checker {
         const e = printType(expected, namer);
         const f = printType(found, namer);
         const detail = clash.left.tag === "fun" && clash.right.tag === "fun" ? functionDifference(clash.left, clash.right) : "";
-        const hint = context.hint?.(expected, found) ?? "";
+        const hint = (context.hint?.(expected, found) ?? "") || unwrapHint(expected, found);
         this.error(context.code ?? "type-mismatch", `expected ${e}${where}, found ${f}${detail}${hint}`, span, { expected: e, found: f });
         return;
       }
@@ -308,9 +322,13 @@ export class Checker {
       switch (item.kind) {
         case "TypeDecl":
           break;
-        case "External":
+        case "External": {
           this.error("interface-only", `external declarations are only allowed in a host interface file: a program cannot declare what the host supplies`, item.span);
+          // Bound anyway, so that its uses are not errors too.
+          const type = externalType(item, new TypeReader(this.table, () => {}));
+          this.scope.bind(item.name, binding({ name: item.name, type, origin: "program", node: item }));
           break;
+        }
         case "Open":
           this.open(item);
           break;
@@ -347,8 +365,12 @@ export class Checker {
   }
 
   private let(node: A.Let, topLevel: boolean): void {
+    const drops = this.dropCount();
     this.level += 1;
+    const defining = node.pattern.kind === "VarPattern" && node.value.kind === "Lambda" ? node.pattern.name : null;
+    if (defining !== null) this.defining.push(defining);
     const type = this.infer(node.value);
+    if (defining !== null) this.defining.pop();
     const binder: Binder = { names: new Map(), parameter: null, within: "pattern" };
     const before = this.patternErrors;
     this.pattern(node.pattern, type, binder);
@@ -356,15 +378,17 @@ export class Checker {
     const bindings = [...binder.names.values()];
     for (const value of bindings) {
       generalize(value.type, this.level);
-      if (node.pattern.kind === "VarPattern" && node.value.kind === "Lambda") value.lambda = node.value;
+      if (node.pattern.kind === "VarPattern") value.lambda = this.functionOf(node.value);
       this.scope.bind(value.name, value);
       if (topLevel) this.topLevel.set(value.name, value);
     }
+    this.markDropped(drops);
     this.lets.push({ pattern: node.pattern, bindings });
     this.matches.push({ kind: "let", node: node.pattern, type, rows: [{ pattern: node.pattern, guarded: false }], broken: this.patternErrors !== before });
   }
 
   private letRec(node: A.LetRec, topLevel: boolean): void {
+    const drops = this.dropCount();
     this.level += 1;
     const bindings: ValueBinding[] = [];
     for (const rec of node.bindings) {
@@ -372,13 +396,15 @@ export class Checker {
         this.error("duplicate-binding", `${rec.name} is bound twice in this let rec`, rec.span);
         continue;
       }
-      const value = binding({ name: rec.name, type: newVar(this.level), origin: "program", lambda: rec.value, node: rec });
+      // Each function's shape is known from its parameters, so a recursive call may leave out a label with a default.
+      const value = binding({ name: rec.name, type: this.shapeOf(rec.value), origin: "program", lambda: rec.value, node: rec });
       bindings.push(value);
       this.scope.bind(rec.name, value);
     }
     for (const rec of node.bindings) {
       const value = bindings.find((b) => b.node === rec);
-      const type = this.lambda(rec.value, null);
+      const shape = value === undefined ? null : resolve(value.type);
+      const type = this.lambda(rec.value, shape?.tag === "fun" ? shape : null);
       if (value !== undefined) {
         this.expect(type, value.type, rec.span, { where: `for ${rec.name}, as its uses inside the let rec need` });
       }
@@ -387,6 +413,51 @@ export class Checker {
     for (const value of bindings) {
       generalize(value.type, this.level);
       if (topLevel) this.topLevel.set(value.name, value);
+    }
+    this.markDropped(drops);
+  }
+
+  /** The type a function literal has before its body is read: its parameters' shape, with fresh types. */
+  private shapeOf(lambda: A.Lambda): TFun {
+    const params: Type[] = [];
+    const labels: TLabel[] = [];
+    for (const param of lambda.params) {
+      if (param.kind !== "LabelledParam") params.push(newVar(this.level));
+      else if (!labels.some((label) => label.label === param.label)) labels.push({ label: param.label, type: newVar(this.level), optional: param.defaultValue !== null });
+    }
+    return fun(params, labels, newVar(this.level));
+  }
+
+  /** The named function a let binds, for the effects summary: a function literal, or another name for one. */
+  private functionOf(value: A.Expression): A.Lambda | null {
+    if (value.kind === "Lambda") return value;
+    if (value.kind === "Identifier") return this.resolutions.get(value)?.lambda ?? null;
+    return null;
+  }
+
+  /** How many places that drop a value have been seen so far. */
+  private dropCount(): { statements: number; lets: number } {
+    return { statements: this.statementsBeforeLast.length, lets: this.lets.length };
+  }
+
+  /**
+   * After a let generalizes: a value dropped inside it whose type is now
+   * generic must not become an outcome where the binding is used (§6a), as in
+   * a helper that calls a callback and drops its result. Its type variable
+   * remembers where the value is dropped.
+   */
+  private markDropped(since: { statements: number; lets: number }): void {
+    const mark = (type: Type, span: A.Span) => {
+      const shape = resolve(type);
+      if (shape.tag === "var" && shape.level === GENERIC && shape.dropped === null) shape.dropped = span;
+    };
+    for (const { node, type } of this.statementsBeforeLast.slice(since.statements)) mark(type, node.span);
+    for (const { pattern, bindings } of this.lets.slice(since.lets)) {
+      for (const node of patternNodes(pattern)) {
+        const type = this.patternTypes.get(node);
+        if (node.kind === "WildcardPattern" && type !== undefined) mark(type, node.span);
+      }
+      for (const value of bindings) if (!value.used && value.node !== null) mark(value.type, value.node.span);
     }
   }
 
@@ -431,7 +502,8 @@ export class Checker {
         }
         return t.string;
       case "ParticipantLiteral":
-        for (const arg of node.args) this.infer(arg.value);
+        // Participants are compared with their arguments, so these hold no function.
+        for (const arg of node.args) this.argument(arg.value, newVar(this.level, null, true), { where: `for ~${arg.label} of a participant` });
         return t.participant;
       case "Identifier":
         return this.identifier(node, false).type;
@@ -527,6 +599,9 @@ export class Checker {
   }
 
   private nameHint(name: string): string {
+    if (this.defining.includes(name)) {
+      return `; a let is not recursive: write let rec ${name} = … to use ${name} in its own definition`;
+    }
     if (this.std !== null && this.std.exports.some((value) => value.name === name)) {
       return `; ${name} is in the standard library: add open Std at the top of the program`;
     }
@@ -579,6 +654,7 @@ export class Checker {
       index += 1;
     }
     const labels = new Set<string>();
+    const unknown: string[] = [];
     for (const arg of args) {
       if (arg.kind !== "LabelledArg") {
         const param = shape.params[index];
@@ -596,13 +672,16 @@ export class Checker {
       const param = shape.labels.find((label) => label.label === arg.label);
       if (param === undefined) {
         this.error("unknown-label", unknownLabel(name, arg.label, shape), arg.span);
+        unknown.push(arg.label);
         this.infer(arg.value);
         continue;
       }
       if (callee.ask && arg.label === "options") this.options(arg, param.type);
       this.argument(arg.value, param.type, { where: `for ~${arg.label} of ${name ?? "this function"}` });
     }
-    const missing = shape.labels.filter((label) => !label.optional && !labels.has(label.label));
+    // A required label that an unknown one nearly spells is reported with the unknown one.
+    const misspelt = new Set(unknown.map((label) => closest(label, shape.labels.map((l) => l.label))));
+    const missing = shape.labels.filter((label) => !label.optional && !labels.has(label.label) && !misspelt.has(label.label));
     if (missing.length > 0) {
       const list = both(missing.map((label) => `~${label.label}`));
       this.error(
@@ -657,7 +736,7 @@ export class Checker {
     if (node.args.length !== ctor.args.length) {
       this.error("constructor-arity", constructorArity(ctor, node.args.length), node.span, { expected: String(ctor.args.length), found: String(node.args.length) });
       for (const arg of node.args) this.infer(arg);
-      return type;
+      return newVar(this.level);
     }
     node.args.forEach((arg, index) => {
       const where = ctor.args.length === 1 ? `for the argument of ${ctor.name}` : `for the ${ordinal(index)} argument of ${ctor.name}`;
@@ -993,10 +1072,7 @@ export class Checker {
     for (const branch of branches) {
       this.cursor = branch;
       const condition = this.infer(branch.condition);
-      this.expect(condition, t.bool, valueSpan(branch.condition), {
-        where: "for the condition of if",
-        hint: (_, found) => (isOutcome(found) ? "; take the bool out with ? or switch" : ""),
-      });
+      this.expect(condition, t.bool, valueSpan(branch.condition), { where: "for the condition of if" });
       this.branch(branch.thenBranch, result, last === null, first);
       first = false;
     }
@@ -1232,9 +1308,11 @@ export class Checker {
       if (match.kind === "switch") {
         const node = match.node as A.Switch;
         const keyword = keywordSpan(node.span, "switch");
+        // A missing case made of wildcards only, such as (_, _), is any value: the switch needs a catch-all.
+        const catchAll = missing.length === 1 && /^[_(), ]+$/.test(missing[0]!);
         const message = match.rows.every((row) => row.guarded)
           ? `this switch has a guard on every case, and a guard can be false: add a case without one, such as ${missing.join(" or ")} => …`
-          : missing.length === 1 && missing[0] === "_"
+          : catchAll
             ? `this switch does not handle every value of type ${printType(match.type)}: add a catch-all case, such as _ => …`
             : `this switch does not handle ${either(missing)}`;
         this.error("non-exhaustive", message, keyword, { missing });
@@ -1299,6 +1377,7 @@ const CLASSES: { readonly [C in ClassName]: { code: Code; name: string; members:
     hint: ": a forEach handler returns one of them; wrap a value that does not matter in ignore(…)",
   },
   equality: { code: "not-comparable", name: "comparable with ==", members: "a type without functions", hint: ": functions cannot be compared" },
+  discardable: { code: "dropped-outcome", name: "not an outcome", members: "a value that is not an outcome", hint: "" },
 };
 
 /** Calls, pipes, field accesses, `?`, prefix and binary operators: the inner link of each, or null. */
@@ -1365,6 +1444,17 @@ function arithmeticHint(op: string): (expected: Type, found: Type) => string {
     if (e.name === "string" && op === "++") return "; turn a value into text with show(x)";
     return "";
   };
+}
+
+/** Advice when an outcome, option or result is found where its value is expected: a ? may be missing. */
+function unwrapHint(expected: Type, found: Type): string {
+  const e = resolve(expected);
+  const f = resolve(found);
+  const families = ["outcome", "option", "result"];
+  if (e.tag === "var" || f.tag !== "con" || !families.includes(f.name)) return "";
+  if (e.tag === "con" && families.includes(e.name)) return "";
+  const what = f.name === "outcome" ? "outcome" : f.name;
+  return `; take the value out of the ${what} with ? or switch`;
 }
 
 /** Advice for a built-in's argument of the wrong type. */

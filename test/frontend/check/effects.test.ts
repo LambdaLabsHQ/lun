@@ -39,6 +39,9 @@ ping()`), ["say: @bob @carol"]);
   assert.deepEqual(effects(`let pick = list => switch list {\n| [first, ..._] => first\n| [] => @auto\n}\nignore(run([@a]->pick, "x"))`), ["run:"]);
   // Code that is never called still counts: it is part of the program.
   assert.deepEqual(effects(`let unused = () => ask(@nobody, "never called")\n()`), ["ask: @nobody"]);
+  // Through the branches of an if or a switch, and another name for a function.
+  assert.deepEqual(effects(`say(if true { @a } else { @b }, "x")`), ["say: @a @b"]);
+  assert.deepEqual(effects(`let tell = who => say(who, "hi")\nlet greet = tell\ngreet(@alice)`), ["say: @alice"]);
   // A function passed as a value may be called anywhere.
   assert.deepEqual(effects(`let tell = t => say(@alice, t->show)\nevery(1d)->forEach(tell)`), ["wait:", "say: @alice"]);
 });

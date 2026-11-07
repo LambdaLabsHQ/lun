@@ -136,8 +136,7 @@ async function checkCommand(args: string[]): Promise<number> {
         continue;
       }
       const result = checkSource(source, { host, std });
-      const diagnostics = result.diagnostics.map((diagnostic) => (diagnostic.code === "syntax" && diagnostic.message === STACK_EXHAUSTED ? { ...diagnostic, code: "too-deep" as const } : diagnostic));
-      results.push({ file: name, ok: result.ok, interface: false, diagnostics, effects: result.effects });
+      results.push({ file: name, ok: result.ok, interface: false, diagnostics: result.diagnostics, effects: result.effects });
     }
   }
   if (json) {

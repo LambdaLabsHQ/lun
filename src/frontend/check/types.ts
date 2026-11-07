@@ -11,14 +11,18 @@
  *
  * Every walk over a type uses an explicit stack. A 10,000-link pipe chain can
  * build a type 10,000 levels deep, and the checker must not run out of stack
- * on it.
+ * on it. Types share parts, and every walk visits a shared part once, so a
+ * chain that doubles a type at each link stays linear.
  */
+import { constants } from "node:buffer";
+import type { Span } from "../ast.ts";
 
 export type Type = TVar | TCon | TTuple | TFun | TParam;
 
 /** A finite class of §3. `equality` is kept apart, as a flag: it is the only class that combines with `handled`. */
 export type FiniteClass = "ordered" | "deadline" | "addressee" | "handled";
-export type ClassName = FiniteClass | "equality";
+/** `discardable`, "not an outcome", is the type of a value that a generic function drops (§6a). */
+export type ClassName = FiniteClass | "equality" | "discardable";
 
 export interface TVar {
   readonly tag: "var";
@@ -30,9 +34,15 @@ export interface TVar {
   cls: FiniteClass | null;
   /** The variable must be an equality type: one with no function inside. */
   equality: boolean;
+  /**
+   * Where a value of this type is dropped, if it is: then the type must not
+   * be an outcome (§6a). Set when a generic function drops a value of a
+   * generalized type, so that each use of the function checks it.
+   */
+  dropped: Span | null;
 }
 
-/** A nominal type: `int`, `list<'a>`, `outcome<'a>`, `release`, `source<#fact, pr>`. */
+/** A nominal type: `int`, `list<'a>`, `outcome<'a>`, `release`, `#source<#fact, pr>`. */
 export interface TCon {
   readonly tag: "con";
   readonly name: string;
@@ -72,8 +82,8 @@ export const GENERIC = Number.MAX_SAFE_INTEGER;
 
 let nextId = 0;
 
-export function newVar(level: number, cls: FiniteClass | null = null, equality = false): TVar {
-  return { tag: "var", id: nextId++, level, link: null, cls, equality };
+export function newVar(level: number, cls: FiniteClass | null = null, equality = false, dropped: Span | null = null): TVar {
+  return { tag: "var", id: nextId++, level, link: null, cls, equality, dropped };
 }
 
 export function con(name: string, ...args: Type[]): TCon {
@@ -88,12 +98,17 @@ export function fun(params: Type[], labels: TLabel[], result: Type): TFun {
   return { tag: "fun", params, labels, result };
 }
 
-/** The kinds of `source<'kind, 'a>`: facts are events, occurrences are streams, and requests. */
+/**
+ * The kinds of the internal source type: facts are events, occurrences are
+ * streams, and requests. Its name and theirs start with `#`, which no type
+ * name in a program can, so a program may declare its own `source`.
+ */
 export const FACT = con("#fact");
 export const OCCURRENCE = con("#occurrence");
 export const REQUEST = con("#request");
+export const SOURCE = "#source";
 
-export const source = (kind: Type, element: Type): TCon => con("source", kind, element);
+export const source = (kind: Type, element: Type): TCon => con(SOURCE, kind, element);
 
 /** Follows links to what a variable stands for, shortening the chain on the way. */
 export function resolve(type: Type): Type {
@@ -130,8 +145,12 @@ export interface TypeFacts {
 export type Clash =
   | { readonly kind: "types"; readonly left: Type; readonly right: Type }
   | { readonly kind: "occurs"; readonly variable: TVar; readonly inside: Type }
-  /** `type` is not a member of `cls`. For `equality`, `inner` is the function inside it. */
-  | { readonly kind: "class"; readonly cls: ClassName; readonly type: Type; readonly inner: Type }
+  /**
+   * `type` is not a member of `cls`. For `equality`, `inner` is the function
+   * inside it. For `discardable`, `dropped` is where a value of the type is
+   * dropped.
+   */
+  | { readonly kind: "class"; readonly cls: ClassName; readonly type: Type; readonly inner: Type; readonly dropped?: Span }
   | { readonly kind: "classes"; readonly first: FiniteClass; readonly second: FiniteClass };
 
 export class UnifyError extends Error {
@@ -153,15 +172,28 @@ const MEMBERS: { readonly [C in FiniteClass]: readonly string[] } = {
 /** Makes two types equal, or throws a UnifyError. Variables bound before the clash stay bound. */
 export function unify(a: Type, b: Type, facts: TypeFacts): void {
   const work: [Type, Type][] = [[a, b]];
+  // Pairs of shared parts are unified once.
+  const done = new Map<Type, Set<Type>>();
   for (let pair = work.pop(); pair !== undefined; pair = work.pop()) {
     const x = resolve(pair[0]);
     const y = resolve(pair[1]);
     if (x === y) continue;
     if (x.tag === "var") {
       bind(x, y, facts);
-    } else if (y.tag === "var") {
+      continue;
+    }
+    if (y.tag === "var") {
       bind(y, x, facts);
-    } else if (x.tag === "con" && y.tag === "con") {
+      continue;
+    }
+    let partners = done.get(x);
+    if (partners?.has(y)) continue;
+    if (partners === undefined) {
+      partners = new Set();
+      done.set(x, partners);
+    }
+    partners.add(y);
+    if (x.tag === "con" && y.tag === "con") {
       if (x.name !== y.name || x.args.length !== y.args.length) throw new UnifyError({ kind: "types", left: x, right: y });
       for (let index = x.args.length - 1; index >= 0; index -= 1) work.push([x.args[index]!, y.args[index]!]);
     } else if (x.tag === "tuple" && y.tag === "tuple") {
@@ -188,6 +220,7 @@ function bind(variable: TVar, type: Type, facts: TypeFacts): void {
   if (type.tag === "var") {
     type.cls = meet(variable.cls, type.cls);
     type.equality ||= variable.equality;
+    type.dropped ??= variable.dropped;
     type.level = Math.min(type.level, variable.level);
     variable.link = type;
     return;
@@ -195,6 +228,9 @@ function bind(variable: TVar, type: Type, facts: TypeFacts): void {
   occursAndLevels(variable, type);
   if (variable.cls !== null && !inFiniteClass(variable.cls, type)) {
     throw new UnifyError({ kind: "class", cls: variable.cls, type, inner: type });
+  }
+  if (variable.dropped !== null && type.tag === "con" && type.name === "outcome") {
+    throw new UnifyError({ kind: "class", cls: "discardable", type, inner: type, dropped: variable.dropped });
   }
   if (variable.equality) requireEquality(type, facts);
   variable.link = type;
@@ -216,11 +252,19 @@ export function inFiniteClass(cls: FiniteClass, type: Type): boolean {
   return resolved.args.length === 0 && MEMBERS[cls].includes(resolved.name);
 }
 
-/** Marks every variable inside a type as an equality variable, or throws if a function is inside. */
+/**
+ * Marks every variable inside a type as an equality variable, or throws if a
+ * function is inside. A request compares as a handle. An event or a stream
+ * never compares, since it may hold a function, as `map` and `filter` do; a
+ * source whose kind is not known yet is taken to be a request.
+ */
 export function requireEquality(type: Type, facts: TypeFacts): void {
+  const seen = new Set<Type>();
   const stack: Type[] = [type];
   for (let item = stack.pop(); item !== undefined; item = stack.pop()) {
     const resolved = resolve(item);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
     switch (resolved.tag) {
       case "var":
         resolved.equality = true;
@@ -231,6 +275,14 @@ export function requireEquality(type: Type, facts: TypeFacts): void {
         stack.push(...resolved.elements);
         break;
       case "con": {
+        if (resolved.name === SOURCE) {
+          const kind = resolve(resolved.args[0]!);
+          if (kind.tag === "var") unify(kind, REQUEST, facts);
+          else if (kind !== REQUEST && !(kind.tag === "con" && kind.name === REQUEST.name)) {
+            throw new UnifyError({ kind: "class", cls: "equality", type, inner: resolved });
+          }
+          break;
+        }
         const rule = facts.equalityRule(resolved.name);
         if (rule.never) throw new UnifyError({ kind: "class", cls: "equality", type, inner: resolved });
         for (const index of rule.params) stack.push(resolved.args[index]!);
@@ -314,7 +366,7 @@ export function instantiate(type: Type, level: number): Type {
     if (leaf.tag !== "var" || leaf.level !== GENERIC) return leaf;
     let copy = copies.get(leaf);
     if (copy === undefined) {
-      copy = newVar(level, leaf.cls, leaf.equality);
+      copy = newVar(level, leaf.cls, leaf.equality, leaf.dropped);
       copies.set(leaf, copy);
     }
     return copy;
@@ -336,11 +388,15 @@ export function substitute(type: Type, args: readonly Type[], level: number): Ty
 export function rebuild(root: Type, leaf: (type: TVar | TParam) => Type): Type {
   type Frame = { type: Type; children: number };
   const results: Type[] = [];
+  // Each shared part is copied once.
+  const copies = new Map<Type, Type>();
   const stack: (Type | Frame)[] = [root];
   for (let item = stack.pop(); item !== undefined; item = stack.pop()) {
     if ("children" in item) {
       const parts = results.splice(results.length - item.children, item.children);
-      results.push(assemble(item.type, parts));
+      const copy = assemble(item.type, parts);
+      copies.set(item.type, copy);
+      results.push(copy);
       continue;
     }
     const resolved = resolve(item);
@@ -348,8 +404,9 @@ export function rebuild(root: Type, leaf: (type: TVar | TParam) => Type): Type {
       results.push(leaf(resolved));
       continue;
     }
-    if (GROUND.has(resolved)) {
-      results.push(resolved);
+    const copy = copies.get(resolved);
+    if (copy !== undefined || GROUND.has(resolved)) {
+      results.push(copy ?? resolved);
       continue;
     }
     const children: Type[] = [];
@@ -423,6 +480,8 @@ export class Namer {
  * kind is unknown.
  */
 export function printType(type: Type, namer: Namer = new Namer()): string {
+  const size = printedSize(type);
+  if (size > constants.MAX_STRING_LENGTH) return `a type too large to show (about ${size} characters)`;
   const out: string[] = [];
   const stack: (Type | string)[] = [type];
   const sequence = (items: (Type | string)[]) => {
@@ -444,7 +503,7 @@ export function printType(type: Type, namer: Namer = new Namer()): string {
         out.push(resolved.index < 0 ? "_" : `'${resolved.name}`);
         break;
       case "con":
-        if (resolved.name === "source") {
+        if (resolved.name === SOURCE) {
           sequence([sourceName(resolved.args[0]!), "<", resolved.args[1]!, ">"]);
         } else if (resolved.args.length === 0) {
           out.push(resolved.name);
@@ -463,6 +522,36 @@ export function printType(type: Type, namer: Namer = new Namer()): string {
     }
   }
   return out.join("");
+}
+
+/**
+ * At most how many characters a type prints as. A type that shares its parts
+ * prints each share in full, so its text can be far larger than the type; it
+ * is shown only if it fits in a string.
+ */
+function printedSize(root: Type): number {
+  const sizes = new Map<Type, number>();
+  type Frame = { type: Type; children: Type[] };
+  const stack: (Type | Frame)[] = [root];
+  const result = (type: Type): number => sizes.get(resolve(type)) ?? 0;
+  for (let item = stack.pop(); item !== undefined; item = stack.pop()) {
+    if ("children" in item) {
+      // Names, brackets and separators: 32 characters is more than any of them takes around one child.
+      sizes.set(item.type, item.children.reduce((total, child) => total + result(child) + 32, 32 + (item.type.tag === "con" ? item.type.name.length : 0)));
+      continue;
+    }
+    const resolved = resolve(item);
+    if (sizes.has(resolved)) continue;
+    if (resolved.tag === "var" || resolved.tag === "param") {
+      sizes.set(resolved, 24);
+      continue;
+    }
+    const children: Type[] = [];
+    pushChildren(resolved, children);
+    stack.push({ type: resolved, children });
+    for (const child of children) stack.push(child);
+  }
+  return result(root);
 }
 
 /** The familiar name of a source of this kind. */
@@ -487,7 +576,11 @@ export function printScheme(type: Type): string {
   const namer = new Namer();
   const text = printType(type, namer);
   const constraints = namer.variables().flatMap((variable) => {
-    const classes = [...(variable.cls === null ? [] : [variable.cls]), ...(variable.equality && (variable.cls === null || variable.cls === "handled") ? ["equality"] : [])];
+    const classes = [
+      ...(variable.cls === null ? [] : [variable.cls]),
+      ...(variable.equality && (variable.cls === null || variable.cls === "handled") ? ["equality"] : []),
+      ...(variable.dropped === null ? [] : ["discardable"]),
+    ];
     return classes.length === 0 ? [] : [`${namer.name(variable)}: ${classes.join(", ")}`];
   });
   return constraints.length === 0 ? text : `${text} where ${constraints.join(", ")}`;

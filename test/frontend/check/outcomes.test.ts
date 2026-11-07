@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { all, check, describe, only, under } from "./helpers.ts";
+import { all, check, describe, only, typeOf, under } from "./helpers.ts";
 
 const advice = "handle it with switch, ? or fail, or write ignore(…) to drop it on purpose";
 
@@ -54,4 +54,30 @@ test("handling, propagating, failing, returning or ignoring an outcome is fine",
     const result = check(source);
     assert.deepEqual(result.diagnostics, [], `${source}\n${describe(result.diagnostics)}`);
   }
+});
+
+test("a generic function that drops a value cannot be given an outcome to drop", () => {
+  const each = `let rec each = (xs, f) => switch xs {
+| [] => ()
+| [x, ...rest] =>
+  f(x)
+  each(rest, f)
+}
+`;
+  assert.equal(typeOf(`${each}()`, "each"), "(list<'a>, ('a) => 'b) => unit where 'b: discardable");
+  const source = `${each}each([@a, @b], who => ask(who, "Approve?"))`;
+  const dropped = only(source, "dropped-outcome");
+  assert.equal(
+    dropped.message,
+    "expected a value that is not an outcome as the result of this function, found outcome<string>: a value of this type is dropped at 4:3 without being looked at; handle the outcome with switch, ? or fail, or set it aside with ignore(…)",
+  );
+  assert.equal(under(source, dropped), `ask(who, "Approve?")`);
+  // Handled in the callback, it is fine.
+  assert.deepEqual(check(`${each}each([@a, @b], who => say(who, "Done"))`).diagnostics, []);
+  assert.deepEqual(check(`${each}each([@a, @b], who => ignore(ask(who, "Approve?")))`).diagnostics, []);
+  // let _ and an unused let in a generic function too.
+  assert.deepEqual(all("let twice = t => {\n  let _ = t()\n  t()\n}\nignore(twice(() => run(@auto, \"x\")))").map(([code, , line]) => [code, line]), [["dropped-outcome", 5]]);
+  assert.deepEqual(all("let first = t => {\n  let unused = t()\n  ()\n}\nfirst(() => run(@auto, \"x\"))").map(([code, , line]) => [code, line]), [["dropped-outcome", 5]]);
+  // A value the generic function returns or uses is not dropped.
+  assert.deepEqual(check("let call = t => t()\nlet r = call(() => run(@auto, \"x\"))?\nsay(@alice, r.text)").diagnostics, []);
 });

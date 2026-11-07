@@ -17,7 +17,9 @@ can act on.
 - **Hindley–Milner.** Types are inferred by Hindley–Milner inference with let
   generalization. Norn has no mutation, so no value restriction is needed.
 - **Recursion.** A `let rec … and …` group is inferred together and
-  generalized after the group.
+  generalized after the group. Each of its functions has, from the start, the
+  shape its parameters give it, so a recursive call may leave out a label
+  that has a default.
 - **Functions are uncurried**, as in ReScript 11.
   - A function type lists positional parameters in order and labelled
     parameters by name: `(participant, string, ~until: time=?) => outcome<string>`.
@@ -58,6 +60,8 @@ can act on.
   - `merge` and `forEach` accept only streams, and `cancel` accepts only
     requests.
   - Messages always use the three familiar names.
+  - The internal names cannot be written, so a program may declare its own
+    `source`.
 - **User types** are declared with `type`, as in ReScript: variants,
   records and aliases. A field or payload may have a function type, as in
   `type job = {name: string, action: () => outcome<report>}`.
@@ -98,6 +102,9 @@ prints as `('a, 'a) => bool where 'a: ordered`.
 | `addressee` | `participant`, `ref` | `say` |
 | `handled` | `unit`, `outcome<_>` | the handler of `forEach` |
 
+- **One more, from §6a.** The checker puts `discardable`, "not an
+  outcome", on a generic type whose values a function drops. It prints as
+  `where 'b: discardable`.
 - **Intersections.** `deadline` lies inside `ordered`. `equality` holds every
   member of `ordered`, `deadline` and `addressee`, and combines with
   `handled`: a variable can need `()` or an outcome whose value is
@@ -106,6 +113,12 @@ prints as `('a, 'a) => bool where 'a: ordered`.
 - **Equality of declared types.** A variant or a record is an equality type
   when the types of its payloads and fields are, for its type arguments. An
   abstract host type is, when its type arguments are.
+- **Sources.** A request compares as a handle. An event or a stream never
+  compares, since it may hold a function, as `map` and `filter` do. A source
+  whose kind is not known yet becomes a request when it is compared.
+- **Participants** are compared together with their arguments, so an
+  argument such as the `~repo` of `@auto(~repo="acme/api")` has no function
+  inside.
 
 Arithmetic is not overloaded, as in ReScript:
 
@@ -199,7 +212,9 @@ Notes:
     "this switch does not handle `Declined(_)` or `Revoked`".
     - It names all of them, not a sample, in the order of the type's
       constructors: `Some(None)` before `Some(Some(false))`.
-    - `_` in an example stands for the values that no case's literal covers.
+    - Where a type has no finite set of values, the example is `_`. When the
+      only example is made of `_`, as `(_, _)` is, the message asks for a
+      catch-all case.
   - `int`, `float` and `string` have no finite set of values, so they need a
     catch-all case. So do types that have no constructor patterns, such as
     `time` or `participant`.
@@ -228,8 +243,23 @@ or write `ignore(e)` to drop it on purpose.
   `let (_, n) = (ask(…), 1)`, and is an error too.
 - Any reference to the name counts as a use, including `show(x)` and passing
   it on.
-- A value that holds outcomes, such as `list<outcome<'a>>` or `option<outcome<'a>>`, is
-  not itself an outcome.
+- **Generic functions.** A function may drop a value whose type it does not
+  know yet, as `each` does with `f(x)` below. That type then gets the
+  `discardable` constraint, so a use that makes it an outcome is the error:
+  `each(people, who => ask(who, "Approve?"))` drops every answer.
+
+  ```norn
+  let rec each = (xs, f) => switch xs {
+  | [] => ()
+  | [x, ...rest] =>
+    f(x)
+    each(rest, f)
+  }
+  ```
+- **The rules look at outcomes, not into other values.** A value that holds
+  outcomes, such as `list<outcome<'a>>`, a tuple or a record, is not itself an
+  outcome. So `let _ = (ask(…), 1)` passes, and so does a record pattern that
+  leaves out an outcome field.
 
 **A program's own result follows the same rule.** If its last expression is
 an outcome other than `Done`, the program fails with that outcome, exactly as
@@ -261,6 +291,11 @@ external prActivity: (string) => stream<string>
   - An external's type variables are generic: `external first: (list<'a>) =>
     option<'a>` works at every type.
   - An external may not redeclare a built-in or another external.
+  - `report` takes no type parameters, since `run` returns `outcome<report>`.
+  - A program reads a field from a value whose type is not known yet by the
+    latest declared record type with that field (§2). So the records of one
+    host should not share field names: the reference host's `message` has a
+    `body`, so that `r => r.text` reads a `report`.
   - `norn check` checks the interface file in use as an interface when it is
     among the paths it is given. Any other `.norn` file is a program, so an
     abstract type or an external in it is an error.
@@ -309,9 +344,15 @@ nothing and replace no runtime check.
   - A target is the first argument of `ask`, `run`, `request`, `start` and
     `say`, and the second of `handOver`.
   - Ref literals count as targets of `say`, as in `doc"ops#machines"`.
+  - A literal counts when it is the argument, or a branch of an `if` or a
+    `switch` there.
   - A literal passed to a parameter of a named function, or a literal default
     of a labelled parameter, counts where the parameter is a target.
-    `remind(@alice, …)` asks `@alice`.
+    `remind(@alice, …)` asks `@alice`. Another name for a function, as in
+    `let greet = tell`, counts as the function.
+  - A target that reaches the effect any other way, such as through a
+    function passed as an argument, is not listed. The family still is, and
+    the runtime checks every effect when it happens (spec §10).
 - **Shape.** `effects` is a list of `{family, targets}` in the order above,
   with the targets sorted, as in
   `[{"family": "ask", "targets": ["@alice"]}, {"family": "wait", "targets": []}]`.
@@ -339,6 +380,10 @@ error: this switch does not handle Declined(_) or Revoked at examples/decide.nor
 - **Running out of stack.** The checker walks chains, such as a 10,000-link
   `->` chain, in loops. A program that nests deeper than the stack can follow
   is the `too-deep` error, not a crash. There is no other limit.
+- **Shared types.** A type that shares its parts, as the result of
+  `x => (x, x)` applied 30 times does, is checked in time linear in its
+  size. Printed in full it would not fit in a string, so a message shows "a
+  type too large to show".
 
 | Code | Severity | Meaning |
 |---|---|---|
@@ -379,7 +424,7 @@ error: this switch does not handle Declined(_) or Revoked at examples/decide.nor
 | `try-return` | error | `?` in a function that returns another family |
 | `non-exhaustive` | error | a `switch` that does not handle every case |
 | `refutable-pattern` | error | a `let` or parameter pattern that does not match every value |
-| `dropped-outcome` | error | an outcome used as a statement before the last, or bound to `_` |
+| `dropped-outcome` | error | an outcome used as a statement before the last, bound to `_`, or given to a generic function that drops it |
 | `unused-outcome` | error | a `let` that binds an outcome to a name that is never used |
 | `interface-only` | error | an external or an abstract type in a program |
 | `interface-item` | error | anything but a type or an external in an interface file |

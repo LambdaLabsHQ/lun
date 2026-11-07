@@ -134,26 +134,61 @@ function summarize(nodes: readonly A.AstNode[], owner: A.Lambda | null, resoluti
   return summary;
 }
 
-/** Records the target of an effect: a literal, or a parameter of the function the effect is in. Returns whether it is new. */
+/**
+ * Records the targets of an effect: the literals among the values its
+ * argument can take, through the branches of `if` and `switch` and the last
+ * expression of a block, and the parameters of the function the effect is in.
+ * Returns whether any is new.
+ */
 function target(summary: Summary, owner: A.Lambda | null, family: Family, argument: A.Expression, resolutions: ReadonlyMap<A.Identifier, ValueBinding>): boolean {
-  const text = literalText(argument);
-  if (text !== null) {
-    const pair = `${family} ${text}`;
-    if (summary.literals.has(pair)) return false;
-    summary.literals.add(pair);
-    return true;
+  let added = false;
+  for (const value of values(argument)) {
+    const text = literalText(value);
+    if (text !== null) {
+      const pair = `${family} ${text}`;
+      if (summary.literals.has(pair)) continue;
+      summary.literals.add(pair);
+      added = true;
+      continue;
+    }
+    if (value.kind !== "Identifier" || owner === null) continue;
+    const parameter = resolutions.get(value)?.parameter;
+    if (parameter == null || parameter.lambda !== owner) continue;
+    const reference: Parameter = "index" in parameter ? { index: parameter.index } : { label: parameter.label };
+    if (summary.parameters.some((known) => known.family === family && sameParameter(known.parameter, reference))) continue;
+    summary.parameters.push({ family, parameter: reference });
+    added = true;
+    if ("label" in reference) {
+      const fallback = summary.defaults.get(reference.label);
+      if (fallback !== undefined) target(summary, owner, family, fallback, resolutions);
+    }
   }
-  if (argument.kind !== "Identifier" || owner === null) return false;
-  const parameter = resolutions.get(argument)?.parameter;
-  if (parameter == null || parameter.lambda !== owner) return false;
-  const reference: Parameter = "index" in parameter ? { index: parameter.index } : { label: parameter.label };
-  if (summary.parameters.some((known) => known.family === family && sameParameter(known.parameter, reference))) return false;
-  summary.parameters.push({ family, parameter: reference });
-  if ("label" in reference) {
-    const fallback = summary.defaults.get(reference.label);
-    if (fallback !== undefined) target(summary, owner, family, fallback, resolutions);
+  return added;
+}
+
+/** The expressions whose value an expression can have: the branches of if and switch, and the last expression of a block. */
+function values(expression: A.Expression): A.Expression[] {
+  const found: A.Expression[] = [];
+  const stack: A.Expression[] = [expression];
+  for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
+    switch (node.kind) {
+      case "If":
+        stack.push(node.thenBranch);
+        if (node.elseBranch !== null) stack.push(node.elseBranch);
+        break;
+      case "Switch":
+        for (const kase of node.cases) stack.push(kase.body);
+        break;
+      case "Block": {
+        const last = node.body.at(-1);
+        if (last !== undefined && last.kind !== "Let" && last.kind !== "LetRec") stack.push(last);
+        break;
+      }
+      default:
+        found.push(node);
+    }
   }
-  return true;
+  return found;
 }
 
 function sameParameter(a: Parameter, b: Parameter): boolean {

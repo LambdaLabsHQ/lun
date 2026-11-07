@@ -63,6 +63,13 @@ test("int, float and string literals need a catch-all case", () => {
   assert.deepEqual(missing("switch true {\n| true => 1\n}"), ["false"]);
 });
 
+test("a table of literals needs a catch-all, and the message says so", () => {
+  const table = Array.from({ length: 8 }, (_, index) => `| ("k${index}", ${index}) => ${index}`).join("\n");
+  const diagnostic = only(`let f = p => switch p {\n${table}\n}`, "non-exhaustive");
+  assert.equal(diagnostic.message, "this switch does not handle every value of type (string, int): add a catch-all case, such as _ => …");
+  assert.deepEqual(diagnostic.missing, ["(_, _)"]);
+});
+
 test("lists, tuples and records", () => {
   assert.deepEqual(missing("switch [1] {\n| [] => 0\n| [x] => x\n}"), ["[_, _, ..._]"]);
   assert.deepEqual(missing("switch [Some(1)] {\n| [] => 0\n| [Some(_), ..._] => 1\n}"), ["[None, ..._]"]);

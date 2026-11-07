@@ -9,7 +9,7 @@
 import type * as A from "../ast.ts";
 import { closest, type CheckDiagnostic } from "./diagnostics.ts";
 import {
-  FACT, GENERIC, OCCURRENCE, REQUEST, con, fun, newVar, rebuild, source, tuple, type EqualityRule, type TLabel, type TParam, type Type,
+  FACT, GENERIC, OCCURRENCE, REQUEST, SOURCE, con, fun, newVar, rebuild, source, tuple, type EqualityRule, type TLabel, type TParam, type Type,
   type TypeFacts,
 } from "./types.ts";
 
@@ -61,7 +61,6 @@ export class TypeTable implements TypeFacts {
   }
 
   equalityRule(name: string): EqualityRule {
-    if (name === "source") return { never: false, params: [1] };
     const info = this.types.get(name);
     if (info === undefined) return { never: false, params: [] };
     return { never: info.equality.never, params: [...info.equality.params] };
@@ -351,6 +350,12 @@ function requirement(type: Type, table: TypeTable, into: { never: boolean; param
         stack.push(...item.elements);
         break;
       case "con": {
+        // A request compares as a handle; an event or a stream may hold a function.
+        if (item.name === SOURCE) {
+          const kind = item.args[0]!;
+          if (!(kind.tag === "con" && kind.name === REQUEST.name)) into.never = true;
+          break;
+        }
         const rule = table.equalityRule(item.name);
         if (rule.never) into.never = true;
         for (const index of rule.params) stack.push(item.args[index]!);

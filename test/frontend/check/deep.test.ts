@@ -30,6 +30,14 @@ test("patterns 10,000 wide check: a tuple, a list, and the redundancy of a case 
   assert.deepEqual(result.diagnostics.map((d) => d.code), ["unreachable-case"]);
 });
 
+test("types that share their parts stay linear to check, and one too large to print says so", () => {
+  // Each link doubles the type: printed in full, the type after 30 links would take about 2^30 characters.
+  const doubled = check(`let w = x => (x, x)\nlet y = 1${"->w".repeat(30)}\nlet z = 1${"->w".repeat(30)}\nlet same = y == z`);
+  assert.deepEqual(doubled.diagnostics, []);
+  assert.match(doubled.bindings.find((binding) => binding.name === "y")!.type, /^a type too large to show \(about \d+ characters\)$/);
+  assert.equal(doubled.bindings.find((binding) => binding.name === "same")!.type, "bool");
+});
+
 test("10,000 cases and 10,000 statements check", () => {
   const cases = Array.from({ length: 10_000 }, (_, index) => `| "${index}" => ${index}`).join("\n");
   ok(`let n = switch "x" {\n${cases}\n| _ => 0\n}`);

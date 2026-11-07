@@ -8,8 +8,10 @@ const root = new URL("../../../", import.meta.url);
 const read = (path: string) => readFileSync(new URL(path, root), "utf8");
 const norn = (directory: string) =>
   readdirSync(new URL(directory, root)).filter((name) => name.endsWith(".norn")).sort().map((name) => `${directory}/${name}`);
+/** The code blocks of a language, indented ones included, without their indentation. */
 const codeBlocks = (markdown: string, language: string) =>
-  [...markdown.matchAll(new RegExp("^```" + language + "\\n([\\s\\S]*?)^```", "gm"))].map((match) => match[1]!);
+  [...markdown.matchAll(new RegExp("^( *)```" + language + "\\n([\\s\\S]*?)^\\1```", "gm"))].map((match) =>
+    match[2]!.split("\n").map((line) => line.slice(match[1]!.length)).join("\n"));
 
 // Everything in the repository type-checks, with no warning either. There are no exceptions: every
 // norn block of the spec is a whole program or a set of definitions.
@@ -38,11 +40,15 @@ test("every code block in the README type-checks", () => {
   }
 });
 
-test("the reference host and the interface in docs/types.md are valid interface files", () => {
+test("the reference host is a valid interface file, and the blocks of docs/types.md check", () => {
   assert.deepEqual(readInterface(read("hosts/reference.norn"), "hosts/reference.norn").diagnostics, []);
   const blocks = codeBlocks(read("docs/types.md"), "norn");
-  assert.ok(blocks.length >= 1);
-  for (const block of blocks) assert.deepEqual(readInterface(block, "docs/types.md").diagnostics, []);
+  assert.equal(blocks.length, 2);
+  for (const block of blocks) {
+    // A block with an external is an interface; the others are programs.
+    const result = /^external /m.test(block) ? readInterface(block, "docs/types.md") : checkSource(block);
+    assert.deepEqual(result.diagnostics, [], `${block}\n${describe(result.diagnostics)}`);
+  }
 });
 
 test("the examples' effects, as a reviewer sees them", () => {

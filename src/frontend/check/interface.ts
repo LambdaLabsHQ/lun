@@ -4,6 +4,7 @@
  * such a file may declare an abstract type or an external.
  */
 import type * as A from "../ast.ts";
+import { STACK_EXHAUSTED, isStackExhausted } from "../diagnostics.ts";
 import { askType, builtinTable, builtinValues, type Family } from "./builtins.ts";
 import { TypeReader, declareTypes, externalType, typeInfo, type Origin, type TypeTable } from "./declarations.ts";
 import { sortDiagnostics, type CheckDiagnostic } from "./diagnostics.ts";
@@ -55,6 +56,18 @@ export function loadInterface(program: A.Program, file: string): HostInterface {
   const diagnostics: CheckDiagnostic[] = [];
   const report = (diagnostic: CheckDiagnostic) => diagnostics.push(diagnostic);
   const table = builtinTable();
+  const values = new Map<string, ValueBinding>();
+  try {
+    declare(program, table, values, report);
+  } catch (error) {
+    // A type nested deeper than the stack can follow.
+    if (!isStackExhausted(error)) throw error;
+    report({ severity: "error", code: "too-deep", message: STACK_EXHAUSTED, span: program.span });
+  }
+  return { file, table, values, diagnostics: sortDiagnostics(diagnostics), ok: !diagnostics.some((d) => d.severity === "error") };
+}
+
+function declare(program: A.Program, table: TypeTable, values: Map<string, ValueBinding>, report: (diagnostic: CheckDiagnostic) => void): void {
   const decls: A.TypeDecl[] = [];
   const externals: A.External[] = [];
   for (const item of program.body) {
@@ -71,9 +84,17 @@ export function loadInterface(program: A.Program, file: string): HostInterface {
   }
   declareTypes(table, decls, "host", report, true);
   // run and start give the host's report. A host that does not declare it gets an abstract one.
-  if (!table.types.has("report")) table.types.set("report", typeInfo({ name: "report", kind: "abstract", origin: "host" }));
+  const declared = table.types.get("report");
+  if (declared === undefined) table.types.set("report", typeInfo({ name: "report", kind: "abstract", origin: "host" }));
+  else if (declared.params.length > 0) {
+    report({
+      severity: "error",
+      code: "type-arity",
+      message: "expected no type parameters for report, found " + declared.params.length + ": report is what run and start return, as in outcome<report>",
+      span: declared.decl!.span,
+    });
+  }
 
-  const values = new Map<string, ValueBinding>();
   values.set("ask", binding({ name: "ask", type: askType(false), origin: "builtin", family: "ask", ask: true }));
   for (const builtin of builtinValues()) {
     values.set(builtin.name, binding({ name: builtin.name, type: builtin.type, origin: "builtin", family: builtin.family }));
@@ -94,7 +115,6 @@ export function loadInterface(program: A.Program, file: string): HostInterface {
     }
     values.set(node.name, binding({ name: node.name, type: externalType(node, reader), origin: "host", node }));
   }
-  return { file, table, values, diagnostics: sortDiagnostics(diagnostics), ok: !diagnostics.some((d) => d.severity === "error") };
 }
 
 function where(node: A.AstNode | null): string {

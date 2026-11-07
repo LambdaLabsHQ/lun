@@ -152,7 +152,7 @@ let d = if judge("x") { () }`), [
     ["type-mismatch", "expected bool for the condition of if, found int", 1, 12],
     ["type-mismatch", "expected int, like the first branch of this if, found string: every branch of an if returns one type", 2, 30],
     ["type-mismatch", "expected unit from a branch of an if without else, found int: such an if is () when its condition is false; add an else branch", 3, 19],
-    ["type-mismatch", "expected bool for the condition of if, found outcome<bool>; take the bool out with ? or switch", 4, 12],
+    ["type-mismatch", "expected bool for the condition of if, found outcome<bool>; take the value out of the outcome with ? or switch", 4, 12],
   ]);
 });
 
@@ -250,4 +250,39 @@ test("a duplicate type or constructor name is an error: both are global", () => 
   assert.equal(message("type t = A\ntype t = B", "duplicate-type"), "the type t is already declared at 1:1; type names are global, so choose another name");
   assert.equal(message("type option<'a> = Nothing", "duplicate-type"), "the type option is built in; choose another name");
   assert.equal(message("type pr = PR", "duplicate-type"), "the type pr is already declared by the host interface; type names are global, so choose another name");
+});
+
+test("let rec: a recursive call may leave out a label with a default, and a missing label is blamed on the call", () => {
+  assert.equal(typeOf("let rec loop = (~n=3) => if n == 0 { () } else { loop(~n=n - 1) }\nlet x = loop()", "loop"), "(~n: int=?) => unit");
+  assert.deepEqual(types("let rec ping = (~n=3) => if n == 0 { 0 } else { pong(~n=n - 1) }\nand pong = (~n) => ping(~n)"), {
+    ping: "(~n: int=?) => int", pong: "(~n: int) => int",
+  });
+  const source = "let rec count = (~from, ~to) => if from > to { () } else { count(~from=from + 1) }";
+  const diagnostic = only(source, "missing-label");
+  assert.equal(diagnostic.message, "expected ~to for count, which requires it; its type is (~from: int, ~to: int) => 'a");
+  assert.equal(under(source, diagnostic), "count(~from=from + 1)");
+});
+
+test("a program may declare its own type named source", () => {
+  assert.equal(typeOf("type source = Github | Slack\nlet x = switch Github {\n| Github => 1\n| Slack => 2\n}", "x"), "int");
+  assert.equal(
+    message("type source<'k, 'a> = Src('k, 'a)\nlet o = wait(Src(1, 2))\nfail(o)", "type-mismatch"),
+    "expected (event|stream|request)<'a> for the first argument of wait, found source<int, int>",
+  );
+});
+
+test("hints for the likeliest mistakes: a missing ?, a missing rec, and a swapped letter", () => {
+  assert.equal(
+    message(`let pr = merged("acme/api#1")->wait\nignore(released(Beta, ~containing=pr))`, "type-mismatch"),
+    "expected pr for ~containing of released, found outcome<pr>; take the value out of the outcome with ? or switch",
+  );
+  assert.equal(
+    message("let loop = n => if n == 0 { () } else { loop(n - 1) }", "unknown-name"),
+    "unknown name loop; a let is not recursive: write let rec loop = … to use loop in its own definition",
+  );
+  assert.equal(message("let value = 1\nignore(valeu + 1)", "unknown-name"), "unknown name valeu; did you mean value?");
+  // A misspelt label is one error, not also a missing one.
+  assert.equal(message("let f = (~until) => until\nignore(f(~untill=1h))", "unknown-label"), "f has no labelled argument ~untill; it takes ~until; did you mean ~until?");
+  // A constructor used without its argument is one error, not also a bad call.
+  assert.equal(message("let f = Some\nignore(f(1))", "constructor-arity"), "expected 1 argument for Some, found 0: it is written Some('a)");
 });

@@ -254,7 +254,9 @@ class Space {
       const signature = this.signature(type);
       const complete = signature !== null && signature.every((ctor) => present.has(ctor.key));
       // The constructors to explore: all of a complete signature; otherwise those that appear, and the rows that match anything.
-      const explored = complete ? signature : signature === null ? [...present.values()] : signature.filter((ctor) => present.has(ctor.key));
+      // Where there is no finite set of constructors, as for int, float and string literals, `_` alone stands for the values
+      // that are missing: listing a literal per case would only say "add a catch-all".
+      const explored = complete ? signature : signature === null ? [] : signature.filter((ctor) => present.has(ctor.key));
       const children = explored.map((ctor) => ({ matrix: specialize(rows, ctor), types: [...this.argumentTypes(ctor, type), ...restTypes] }));
       if (!complete) children.push({ matrix: defaults(rows), types: restTypes });
       const assemble = (parts: Vector[][]): Vector[] => {
@@ -272,8 +274,7 @@ class Space {
             else for (const witness of others) witnesses.push({ head: { tag: "ctor", ctor, args: anys(ctor.arity) }, tail: witness });
           }
         } else {
-          // No finite set of constructors, or none appears: the constructors that do, then any other value.
-          for (const ctor of explored) wrap(ctor);
+          // No finite set of constructors, or none appears: any other value.
           for (const witness of others) witnesses.push({ head: ANY, tail: witness });
         }
         return witnesses;
