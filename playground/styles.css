@@ -983,7 +983,7 @@ code.ref {
   padding-left: var(--text);
 }
 
-.thread:not(:empty) + .now::before {
+.thread:not(:empty) + .now:has(.now-time)::before {
   content: "";
   position: absolute;
   top: -12px;

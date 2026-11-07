@@ -89,3 +89,10 @@ function closed(request: RequestInfo, outcome: Extract<Entry, { kind: "closed" }
       return line(["The request to ", who ?? holder, " was revoked"], "bad");
   }
 }
+
+/** Words that end a sentence: a full stop, unless they already end in one, or in a quoted question or exclamation. */
+export function sentence(words: readonly Run[]): Run[] {
+  const last = words.at(-1);
+  const text = typeof last === "string" ? last : last?.text ?? "";
+  return /[.?!]$/.test(text.trimEnd()) ? [...words] : [...words, "."];
+}
