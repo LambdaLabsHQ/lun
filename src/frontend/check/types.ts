@@ -14,7 +14,6 @@
  * on it. Types share parts, and every walk visits a shared part once, so a
  * chain that doubles a type at each link stays linear.
  */
-import { constants } from "node:buffer";
 import type { Span } from "../ast.ts";
 
 export type Type = TVar | TCon | TTuple | TFun | TParam;
@@ -478,56 +477,101 @@ export class Namer {
  * ~until: 'a=?) => outcome<string>`. A source shows as `event<'a>`,
  * `stream<'a>` or `request<'a>`, and as `(event|stream|request)<'a>` while its
  * kind is unknown.
+ *
+ * The text is built from the leaves up, once for each part, and a shared part
+ * reuses its text: engines concatenate strings without copying them, so this
+ * stays linear in the size of the type even when the text is far larger. A
+ * type whose text is longer than the engine's longest string says so instead.
+ * That limit is the engine's own; nothing here sets one.
  */
 export function printType(type: Type, namer: Namer = new Namer()): string {
-  const size = printedSize(type);
-  if (size > constants.MAX_STRING_LENGTH) return `a type too large to show (about ${size} characters)`;
-  const out: string[] = [];
-  const stack: (Type | string)[] = [type];
-  const sequence = (items: (Type | string)[]) => {
-    for (let index = items.length - 1; index >= 0; index -= 1) stack.push(items[index]!);
-  };
-  const commas = (types: readonly (Type | (Type | string)[])[]): (Type | string)[] =>
-    types.flatMap((item, index) => [...(index > 0 ? [", "] : []), ...(Array.isArray(item) ? item : [item])]);
-  for (let item = stack.pop(); item !== undefined; item = stack.pop()) {
-    if (typeof item === "string") {
-      out.push(item);
-      continue;
-    }
-    const resolved = resolve(item);
-    switch (resolved.tag) {
-      case "var":
-        out.push(namer.name(resolved));
-        break;
-      case "param":
-        out.push(resolved.index < 0 ? "_" : `'${resolved.name}`);
-        break;
-      case "con":
-        if (resolved.name === SOURCE) {
-          sequence([sourceName(resolved.args[0]!), "<", resolved.args[1]!, ">"]);
-        } else if (resolved.args.length === 0) {
-          out.push(resolved.name);
-        } else {
-          sequence([resolved.name, "<", ...commas(resolved.args), ">"]);
+  const texts = new Map<Type, string>();
+  const root = resolve(type);
+  // A part is pushed once to visit its children, then again, marked, to join their texts.
+  const stack: { type: Type; joined: boolean }[] = [{ type: root, joined: false }];
+  try {
+    for (let item = stack.pop(); item !== undefined; item = stack.pop()) {
+      if (texts.has(item.type)) continue;
+      const children = printedChildren(item.type);
+      if (!item.joined) {
+        stack.push({ type: item.type, joined: true });
+        // Children are joined left to right, so variables are named in the order a reader meets them.
+        for (let index = children.length - 1; index >= 0; index -= 1) {
+          if (!texts.has(children[index]!)) stack.push({ type: children[index]!, joined: false });
         }
-        break;
-      case "tuple":
-        sequence(["(", ...commas(resolved.elements), ")"]);
-        break;
-      case "fun": {
-        const labels = resolved.labels.map((label): (Type | string)[] => [`~${label.label}: `, label.type, ...(label.optional ? ["=?"] : [])]);
-        sequence(["(", ...commas([...resolved.params, ...labels]), ") => ", resolved.result]);
-        break;
+        continue;
       }
+      texts.set(item.type, typeText(item.type, children.map((child) => texts.get(child)!), namer));
+    }
+  } catch (error) {
+    if (!(error instanceof TextTooLong)) throw error;
+    return `a type too large to show (about ${printedSize(type)} characters)`;
+  }
+  return texts.get(root)!;
+}
+
+/** The parts of a type that its text shows, resolved, in the order it shows them. A source shows its kind by name only. */
+function printedChildren(type: Type): Type[] {
+  switch (type.tag) {
+    case "con":
+      return (type.name === SOURCE ? type.args.slice(1) : type.args).map(resolve);
+    case "tuple":
+      return type.elements.map(resolve);
+    case "fun":
+      return [...type.params, ...type.labels.map((label) => label.type), type.result].map(resolve);
+    case "var":
+    case "param":
+      return [];
+  }
+}
+
+/** The text of a type, given the texts of its printed children. */
+function typeText(type: Type, children: string[], namer: Namer): string {
+  switch (type.tag) {
+    case "var":
+      return namer.name(type);
+    case "param":
+      return type.index < 0 ? "_" : `'${type.name}`;
+    case "con":
+      if (type.name === SOURCE) return concat([sourceName(type.args[0]!), "<", children[0]!, ">"]);
+      return children.length === 0 ? type.name : concat([type.name, "<", ...commas(children), ">"]);
+    case "tuple":
+      return concat(["(", ...commas(children), ")"]);
+    case "fun": {
+      const params = children.slice(0, type.params.length);
+      const labels = type.labels.map((label, index) =>
+        concat([`~${label.label}: `, children[type.params.length + index]!, label.optional ? "=?" : ""]));
+      return concat(["(", ...commas([...params, ...labels]), ") => ", children[children.length - 1]!]);
     }
   }
-  return out.join("");
+}
+
+function commas(texts: string[]): string[] {
+  return texts.flatMap((text, index) => (index > 0 ? [", ", text] : [text]));
+}
+
+/** The engine refused to build a string: it would be longer than the longest string the engine can hold. */
+class TextTooLong extends Error {}
+
+/**
+ * Joins texts. Joining strings fails only when the result would be longer
+ * than the engine allows, and each engine says so its own way: V8 and
+ * JavaScriptCore throw a RangeError, SpiderMonkey an InternalError.
+ */
+function concat(parts: string[]): string {
+  let text = "";
+  try {
+    for (const part of parts) text += part;
+  } catch {
+    throw new TextTooLong();
+  }
+  return text;
 }
 
 /**
- * At most how many characters a type prints as. A type that shares its parts
- * prints each share in full, so its text can be far larger than the type; it
- * is shown only if it fits in a string.
+ * At most how many characters a type prints as, for the message about a type
+ * too large to show. A type that shares its parts prints each share in full,
+ * so its text can be far larger than the type.
  */
 function printedSize(root: Type): number {
   const sizes = new Map<Type, number>();

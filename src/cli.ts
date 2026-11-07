@@ -9,9 +9,8 @@ import process from "node:process";
 import {
   STACK_EXHAUSTED, astToJson, formatDiagnostic, isStackExhausted, parse, treeLines, type Diagnostic,
 } from "./frontend/index.ts";
-import {
-  checkSource, readInterface, referenceHostPath, standardLibrary, type CheckDiagnostic, type EffectSummary,
-} from "./frontend/check/index.ts";
+import { checkSource, readInterface, type CheckDiagnostic, type EffectSummary } from "./frontend/check/index.ts";
+import { referenceHostPath, standardLibrary } from "./frontend/check/node.ts";
 
 const usage = `Usage: norn <command> [options]
 

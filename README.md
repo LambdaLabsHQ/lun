@@ -135,6 +135,18 @@ names. A program brings in the [standard library](std/std.norn) with
 The [examples](examples) are the programs of spec §3. The
 [standard library](std/std.norn) is §8.
 
+## Playground
+
+The [playground](https://norn-lang.org/norn/) checks Norn as you type, in the
+browser, with the same checker as `norn check`. Its source is in
+[`playground`](playground); it is the one part of this repository with a build
+step, which bundles it with esbuild and CodeMirror.
+
+```sh
+npm run playground:dev     # serve it at http://localhost:8000, rebuilt on every change
+npm run playground:build   # build it into playground/dist
+```
+
 ## Hosts
 
 A host implements Norn's effects: who the participants are, how requests reach

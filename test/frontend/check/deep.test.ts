@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Expression, Program, Span } from "../../../src/frontend/ast.ts";
 import { STACK_EXHAUSTED } from "../../../src/frontend/index.ts";
-import { checkProgram, referenceHost, standardLibrary } from "../../../src/frontend/check/index.ts";
+import { checkProgram } from "../../../src/frontend/check/index.ts";
+import { referenceOptions } from "../../../src/frontend/check/node.ts";
 import { check, describe } from "./helpers.ts";
 
 /** A program that must check without any diagnostic. */
@@ -46,7 +47,7 @@ test("10,000 cases and 10,000 statements check", () => {
 
 test("a tree nested deeper than the stack can follow is a diagnostic, not a crash", () => {
   const span: Span = { start: { line: 1, column: 1, offset: 0 }, end: { line: 1, column: 2, offset: 1 } };
-  const options = { host: referenceHost(), std: standardLibrary() };
+  const options = referenceOptions();
   const nest = (wrap: (inner: Expression) => Expression): Program => {
     let expression: Expression = { kind: "IntLiteral", value: "1", span };
     for (let depth = 0; depth < 200_000; depth += 1) expression = wrap(expression);

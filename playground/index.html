@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Norn playground</title>
+  <meta name="description" content="Write Norn, the coordination language for teams of people and AI agents, and see its type errors as you type.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#fafaf8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16181b" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <script>
+    // The theme chosen on an earlier visit, applied before the first paint.
+    try {
+      const theme = localStorage.getItem("norn-theme");
+      if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+    } catch {}
+  </script>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="main.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <h1 class="title">
+      <svg class="wordmark" viewBox="0 2.6 56 16.8" role="img" aria-label="Norn">
+        <path d="M1.2 17V10a5 5 0 0 1 10 0v7M44 17V10a5 5 0 0 1 10 0v7M34.4 17V10a5 5 0 0 1 5-5"/>
+        <circle cx="22.8" cy="11" r="6.1"/>
+      </svg>
+      <span class="title-rest">playground</span>
+    </h1>
+    <p class="tagline">Norn is a coordination language for teams of people and AI agents.</p>
+    <nav class="masthead-links" aria-label="Links">
+      <a href="https://github.com/norn-lang/norn">Source on GitHub</a>
+      <button id="theme" class="theme" type="button">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.25"/><path d="M8 2.75a5.25 5.25 0 0 1 0 10.5z"/></svg>
+      </button>
+    </nav>
+  </header>
+
+  <main class="workspace">
+    <section class="program" aria-label="Program">
+      <div class="toolbar">
+        <div class="examples">
+          <button id="examples-button" class="quiet-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="examples-menu">
+            Examples
+            <svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg>
+          </button>
+          <div id="examples-menu" class="examples-menu" role="menu" aria-label="Examples" hidden></div>
+        </div>
+        <span id="program-name" class="program-name"></span>
+        <span id="status" class="status" role="status"></span>
+        <button id="copy-link" class="quiet-button" type="button">Copy link</button>
+      </div>
+      <p id="notice" class="notice" role="status" hidden></p>
+      <div id="editor" class="editor"></div>
+    </section>
+
+    <aside id="review" class="review" aria-label="Review"></aside>
+  </main>
+</body>
+</html>

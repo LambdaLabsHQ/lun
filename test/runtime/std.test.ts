@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { parse } from "../../src/frontend/parser.ts";
 import { astToJson } from "../../src/frontend/json.ts";
-import { checkSource } from "../../src/frontend/check/load.ts";
+import { checkSource } from "../../src/frontend/check/index.ts";
+import { referenceOptions } from "../../src/frontend/check/node.ts";
 import { compile, compileAstJson } from "../../src/runtime/code.ts";
 import { MemoryStore } from "../../src/runtime/memory-store.ts";
 import { SqliteStore } from "../../src/runtime/sqlite-store.ts";
@@ -30,7 +31,7 @@ async function offered(store: DurableStore): Promise<StoredRequest> {
 for (const [name, open] of Object.entries({ memory: (c: VirtualClock) => new MemoryStore(c), sqlite: (c: VirtualClock) => new SqliteStore(":memory:", c) })) {
   test(`${name}: open Std executes the same remind that passed type checking`, async () => {
     const source = 'open Std\nremind(@alice, "Review this", ~at=1h)';
-    const checked = checkSource(source); assert.ok(checked.ok, JSON.stringify(checked.diagnostics));
+    const checked = checkSource(source, referenceOptions()); assert.ok(checked.ok, JSON.stringify(checked.diagnostics));
     const clock = new VirtualClock(), store = open(clock), host = new SimulatedHost(store, clock);
     const runtime = new Runtime(compile(checked.program!, {std}), store, host);
     try {

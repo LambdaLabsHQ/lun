@@ -21,3 +21,4 @@ jobs:
       - run: npm run typecheck
       - run: npx tsc --noEmit -p tsconfig.browser.json
       - run: npm test
+      - run: npm run playground:build

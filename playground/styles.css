@@ -1,0 +1,778 @@
+/*
+ * The Norn playground. Its colours are the natural colours of Shetland
+ * sheep, whose names come from the Norn language: shaela (dark grey) for
+ * ink, emsket (dusky bluish grey) for what is secondary, moorit (reddish
+ * brown) for times, mioget (light yellowish brown) for what waits on you.
+ * Woad blue marks participants, links and focus.
+ */
+
+:root {
+  color-scheme: light;
+  --ground: #fafaf8;
+  --slip: #f1f2ee;
+  --slip-hover: #e9ebe6;
+  --float: #e6eaee;
+  --float-hover: #dbe1e7;
+  --ink: #22252a;
+  --ink-2: #4b5159;
+  --ink-3: #686e77;
+  --ink-4: #a2a7ad;
+  --rule: #e3e5e0;
+  --woad: #2f5e8e;
+  --moorit: #8c5a3b;
+  --orchil: #77477c;
+  --string: #3a6a50;
+  --madder: #b0392c;
+  --weld: #8a6a0c;
+  --lichen: #3c6b45;
+  --mioget: #f3ead4;
+  --mioget-ink: #6a5121;
+  --selection: #cddbea;
+  --active-line: #eaece7;
+
+  --sans: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Code", "JetBrains Mono", "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --gutter: 28px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #16181b;
+    --slip: #1d2024;
+    --slip-hover: #252930;
+    --float: #262c33;
+    --float-hover: #2f363e;
+    --ink: #e4e5e1;
+    --ink-2: #c0c4c9;
+    --ink-3: #959ba3;
+    --ink-4: #646a72;
+    --rule: #2b2f34;
+    --woad: #93b7df;
+    --moorit: #dca581;
+    --orchil: #cfa4d4;
+    --string: #a2ccb0;
+    --madder: #f0907f;
+    --weld: #e1be5c;
+    --lichen: #95c89c;
+    --mioget: #2f2919;
+    --mioget-ink: #e8cc8c;
+    --selection: #2f4661;
+    --active-line: #212428;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #16181b;
+  --slip: #1d2024;
+  --slip-hover: #252930;
+  --float: #262c33;
+  --float-hover: #2f363e;
+  --ink: #e4e5e1;
+  --ink-2: #c0c4c9;
+  --ink-3: #959ba3;
+  --ink-4: #646a72;
+  --rule: #2b2f34;
+  --woad: #93b7df;
+  --moorit: #dca581;
+  --orchil: #cfa4d4;
+  --string: #a2ccb0;
+  --madder: #f0907f;
+  --weld: #e1be5c;
+  --lichen: #95c89c;
+  --mioget: #2f2919;
+  --mioget-ink: #e8cc8c;
+  --selection: #2f4661;
+  --active-line: #212428;
+}
+
+/* Page ---------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 14px/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "kern";
+}
+
+a {
+  color: var(--woad);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.93em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--woad);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* Masthead ------------------------------------------------------------------ */
+
+.masthead {
+  display: flex;
+  align-items: center;
+  gap: 8px 24px;
+  padding: 18px var(--gutter) 16px;
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 450;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.wordmark {
+  height: 19px;
+  width: auto;
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2.3;
+  stroke-linecap: round;
+  overflow: visible;
+}
+
+.title-rest {
+  color: var(--ink-3);
+  position: relative;
+  top: 0.5px;
+}
+
+.tagline {
+  flex: 1;
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.masthead-links {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  white-space: nowrap;
+}
+
+.theme {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.theme:hover {
+  background: var(--slip-hover);
+}
+
+.theme svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-width: 1.4;
+}
+
+.theme svg path {
+  fill: var(--ink-2);
+  stroke: none;
+}
+
+/* Workspace ----------------------------------------------------------------- */
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 1fr);
+  gap: 40px;
+  padding: 0 var(--gutter) var(--gutter);
+}
+
+.program {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  margin-bottom: 8px;
+}
+
+.quiet-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.quiet-button:hover,
+.quiet-button[aria-expanded="true"] {
+  background: var(--slip-hover);
+}
+
+.toolbar > .quiet-button:last-child {
+  color: var(--ink-2);
+}
+
+.chevron {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--ink-3);
+}
+
+.program-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding-right: 6px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.status:empty {
+  display: none;
+}
+
+.glyph {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.glyph-ok {
+  stroke: var(--lichen);
+}
+
+.glyph-error {
+  stroke: var(--madder);
+}
+
+.glyph-warning {
+  stroke: var(--weld);
+}
+
+.notice {
+  margin: 0 0 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--mioget);
+  color: var(--mioget-ink);
+}
+
+.notice[hidden] {
+  display: none;
+}
+
+/* Examples menu ------------------------------------------------------------- */
+
+.examples {
+  position: relative;
+}
+
+.examples-menu {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(420px, calc(100vw - 2 * var(--gutter)));
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--float);
+}
+
+.examples-menu[hidden] {
+  display: none;
+}
+
+.example {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.example:hover,
+.example:focus-visible {
+  background: var(--float-hover);
+  outline: none;
+}
+
+.example-file {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.example-summary {
+  color: var(--ink-3);
+}
+
+/* Editor -------------------------------------------------------------------- */
+
+.editor {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--slip);
+}
+
+.editor .cm-editor {
+  height: 100%;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+.editor .cm-scroller {
+  font-family: var(--mono);
+  line-height: 1.7;
+}
+
+.editor .cm-content {
+  padding: 16px 0 24px;
+  caret-color: var(--ink);
+}
+
+.editor .cm-line {
+  padding: 0 20px 0 calc(6px + var(--hang, 0ch));
+  text-indent: calc(-1 * var(--hang, 0ch));
+}
+
+.editor .cm-gutters {
+  border: 0;
+  background: transparent;
+  color: var(--ink-4);
+}
+
+.editor .cm-lineNumbers .cm-gutterElement {
+  min-width: 36px;
+  padding: 0 4px 0 14px;
+}
+
+.editor .cm-activeLine {
+  background: var(--active-line);
+}
+
+.editor .cm-activeLineGutter {
+  background: transparent;
+  color: var(--ink-2);
+}
+
+.editor .cm-editor:not(.cm-focused) .cm-activeLine {
+  background: transparent;
+}
+
+.editor .cm-editor:not(.cm-focused) .cm-activeLineGutter {
+  color: inherit;
+}
+
+.editor .cm-gutterElement.cm-problemLine-error {
+  color: var(--madder);
+  font-weight: 600;
+}
+
+.editor .cm-gutterElement.cm-problemLine-warning {
+  color: var(--weld);
+  font-weight: 600;
+}
+
+.editor .cm-cursor {
+  border-left: 1.5px solid var(--ink);
+}
+
+.editor .cm-selectionBackground,
+.editor .cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+  background: var(--selection);
+}
+
+.editor .cm-matchingBracket {
+  background: none;
+  color: inherit;
+  outline: 1px solid var(--ink-4);
+  border-radius: 2px;
+}
+
+.editor .cm-nonmatchingBracket {
+  background: none;
+  color: var(--madder);
+}
+
+/* The checker's diagnostics, inline. */
+.editor .cm-lintRange {
+  background-image: none;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  text-decoration-skip-ink: none;
+}
+
+.editor .cm-lintRange-error {
+  text-decoration-color: var(--madder);
+}
+
+.editor .cm-lintRange-warning {
+  text-decoration-color: var(--weld);
+}
+
+.editor .cm-lintPoint::after {
+  border-bottom-color: var(--madder);
+}
+
+.editor .cm-lintPoint-warning::after {
+  border-bottom-color: var(--weld);
+}
+
+.editor .cm-tooltip {
+  border: 0;
+  border-radius: 10px;
+  background: var(--float);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13.5px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+.editor .cm-tooltip-lint {
+  max-width: min(480px, 90vw);
+}
+
+.editor .cm-diagnostic {
+  padding: 8px 12px;
+  border-left: 0;
+  margin-left: 0;
+}
+
+.editor .cm-diagnostic + .cm-diagnostic {
+  padding-top: 0;
+}
+
+.editor .cm-diagnosticSource {
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 12px;
+  opacity: 1;
+}
+
+/* Tokens, from Norn's lexer. Colour marks what Norn adds to ReScript and what a reader scans for. */
+.tok-comment { color: var(--ink-3); }
+.tok-keyword { color: var(--ink); font-weight: 600; }
+.tok-effect { color: var(--ink); font-weight: 600; }
+.tok-bool,
+.tok-constructor { color: var(--orchil); }
+.tok-string { color: var(--string); }
+.tok-interpolation { color: var(--ink-3); }
+.tok-number,
+.tok-time { color: var(--moorit); }
+.tok-participant,
+.tok-ref { color: var(--woad); }
+.tok-type,
+.tok-typeVar,
+.tok-label { color: var(--ink-2); }
+.tok-operator { color: var(--ink-3); }
+
+/* Review -------------------------------------------------------------------- */
+
+.review {
+  min-width: 0;
+  padding-top: 8px;
+}
+
+.review-section + .review-section {
+  margin-top: 30px;
+}
+
+.review h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.review p {
+  margin: 0;
+}
+
+.quiet {
+  color: var(--ink-3);
+}
+
+.failure {
+  color: var(--madder);
+}
+
+.note {
+  margin-top: 12px !important;
+  color: var(--ink-3);
+  font-size: 13px;
+  max-width: 52ch;
+}
+
+.problems {
+  display: grid;
+  gap: 2px;
+  margin: 0 -10px;
+  padding: 0;
+  list-style: none;
+}
+
+.problem {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.problem:hover {
+  background: var(--slip-hover);
+}
+
+.problem .glyph {
+  margin-top: 2px;
+}
+
+.problem-message {
+  overflow-wrap: anywhere;
+}
+
+.problem-meta {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.problem-code {
+  font-size: 12px;
+}
+
+.effects,
+.types {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.effect,
+.binding {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  column-gap: 12px;
+}
+
+.effects dt,
+.effects dd,
+.types dt,
+.types dd {
+  margin: 0;
+}
+
+.effect-family {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.effects dd {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+}
+
+.effect-words {
+  color: var(--ink-3);
+}
+
+.effect-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.effect-targets:empty {
+  display: none;
+}
+
+.participant,
+.ref {
+  color: var(--woad);
+  font-size: 13px;
+}
+
+.named {
+  margin-top: 14px !important;
+}
+
+.binding {
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+
+.types code {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.types dd code {
+  color: var(--ink-2);
+}
+
+/* Laptops and wider: the page fills the window, and the editor and the review scroll within it. */
+@media (min-width: 900px) {
+  body {
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .workspace {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .review {
+    overflow-y: auto;
+    padding-right: 4px;
+    margin-right: -4px;
+  }
+}
+
+/* Phones and narrow windows: one column, in reading order. */
+@media (max-width: 899px) {
+  :root {
+    --gutter: 16px;
+  }
+
+  .masthead {
+    flex-wrap: wrap;
+    padding-top: 14px;
+  }
+
+  .tagline {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .masthead-links {
+    margin-left: auto;
+  }
+
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+  }
+
+  /* The editor grows with the program, and the page is the only thing that scrolls. */
+  .editor {
+    flex: none;
+  }
+
+  .editor .cm-editor {
+    height: auto;
+    min-height: 240px;
+    font-size: 15px;
+  }
+
+  .program-name {
+    display: none;
+  }
+}
+
+/* 16px keeps a phone from zooming in when the editor takes focus. */
+@media (pointer: coarse) {
+  .editor .cm-editor {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+  }
+}
