@@ -106,6 +106,7 @@ their work together borrows its name.
 - [Syntax tree (AST) and syntax decisions](docs/ast.md)
 - [Durable runtime research](docs/research/runtime.md)
 - [Browser runtime and pinned Std imports](docs/browser-runtime.md)
+- For models: [a skill for writing Norn](skills/norn/SKILL.md) and [llms.txt](llms.txt)
 
 ## Building
 

@@ -40,6 +40,15 @@ test("every code block in the README type-checks", () => {
   }
 });
 
+test("every norn block in the skill for models type-checks", () => {
+  const blocks = codeBlocks(read("skills/norn/SKILL.md"), "norn");
+  assert.ok(blocks.length >= 5);
+  for (const block of blocks) {
+    const result = checkSource(block);
+    assert.deepEqual(result.diagnostics, [], `${block}\n${describe(result.diagnostics)}`);
+  }
+});
+
 test("the reference host is a valid interface file, and the blocks of docs/types.md check", () => {
   assert.deepEqual(readInterface(read("hosts/reference.norn"), "hosts/reference.norn").diagnostics, []);
   const blocks = codeBlocks(read("docs/types.md"), "norn");
