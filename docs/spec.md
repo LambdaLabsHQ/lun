@@ -569,8 +569,8 @@ suite that every host runs is still to be written.
 - ✓ a crash between recording an intent and dispatching it;
 - ✓ a crash between dispatch and receipt;
 - ✓ a reply racing a deadline; a deleted source is not checked yet;
-- the six contract cases of §11.1 (to be checked by the runtime that
-  implements this redesign);
+- ✓ the six contract cases of §11.1, including shared Memory/SQLite checks,
+  nested `or` through disk restart, and explicit ABI/store version refusal;
 - cancellation while an agent is already running;
 - ✓ permission withdrawn while suspended;
 - ✓ a definition or ABI change is refused on resumption; migration is not

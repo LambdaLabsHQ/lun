@@ -187,8 +187,9 @@ export class MemoryStore implements DurableStore {
     });
   }
   async rejectAnswer(id: string, epoch: number, holder: string, answer: Json, reason: string): Promise<boolean> {
-    const at = this.time(), value = copy(answer);
+    const value = copy(answer);
     return this.transaction(() => {
+      const at = this.time();
       this.resolveWaits(at); if (!this.state.requests.has(id)) return false;
       this.state.evidence.set(id, [...(this.state.evidence.get(id) ?? []), { epoch, holder, outcome: value, receivedAt: at, accepted: false, invalidReason: reason }]);
       return true;
