@@ -25,36 +25,42 @@ together.
 
 The participants are autonomous: people, and complete AI agents of any kind,
 not model calls or tools. Every call to a participant is a *request*. They may
-answer late, decline, fail, or lose the authority to act, and the language
-makes a program handle each case.
+answer, refuse, not reply in time, try and fail, or lose the authority to act,
+and the language makes a program handle each case.
 
 ```rescript
-// Ask a person to choose; if nobody chooses by the deadline, the declared default applies.
-type probe = Ship | Drop
-
-switch ask(@alice, "Ship the billing probe?", ~options=[Ship, Drop], ~until=2026-11-07T12:00Z) {
-| Done(Drop) => run(@auto, "Record the decision: drop the billing probe")
-| Done(Ship) | TimedOut => run(@auto, "Ship the billing probe as recommended: at most US$0.10")
+// Ask a person to confirm; if nobody replies by the deadline, the declared default applies.
+switch confirm(@alice, "Ship the billing probe?", ~by=2026-11-07T12:00Z)->wait {
+| Answered(Yes) | NoReply => run(@auto, "Ship it as recommended: at most US$0.10")->wait
+| Answered(No) => run(@auto, "Record the decision: don't ship")->wait
 | other => fail(other)
 }
 ```
 
 ```rescript
 // Wait for facts in the world, then hand the next step to an agent.
-let pr = merged("acme/api#1436")->wait?
-switch released(Beta, ~containing=pr)->wait(~until=1d) {
-| Done(release) => run(@codex, `Verify ${release.version} on the Windows build machine`)
-| other =>
-  say(@alice, "#1436 did not reach a beta within a day")
-  fail(other)
+let pr = merged("acme/api#1436")->wait
+switch released(Beta, ~containing=pr)->waitUntil(1d) {
+| Some(release) => run(@codex, `Verify ${release.version} on the Windows build machine`)->wait
+| None => run(@alice, "#1436 did not reach a beta within a day: find out why")->wait
 }
+```
+
+```rescript
+// Ask an agent; after an hour, hand the same question over to a person.
+let q = ask(@codex, "Is the build machine still overheating?")
+let reply = switch q->waitUntil(1h) {
+| Some(r) => r
+| None => q->handOver(@alice)->wait
+}
+say(doc"ops#machines", reply?)
 ```
 
 ```rescript
 // A standing duty: every day, and whenever CI fails on main.
 every(1d)
 ->or(ciFailed("acme/api"))
-->forEach(_ => run(@auto, "Check production health and fix the riskiest issue"))
+->forEach(_ => run(@auto, "Check production health and fix the riskiest issue")->wait)
 ```
 
 ## Why a language
@@ -78,9 +84,12 @@ Everything else becomes a library.
 - **Programs, not graphs.** You write ordinary functional programs. The
   dependency graph is whatever the runtime can draw from where programs are
   waiting.
-- **Autonomy in the types.** Outcomes are `Done | Declined | Failed |
-  TimedOut | Cancelled | Revoked`. A request and a wait are separate things,
-  so a timeout never quietly turns into a second request.
+- **One word, one meaning.** A request ends in a reply: `Answered | Refused |
+  NoReply | Broke | Cancelled | Revoked`, each naming who acted and why.
+  Every verb (`ask`, `confirm`, `choose`, `run`, `judge`) returns a request,
+  and waiting is always explicit, with `->wait` or `->waitUntil`. `~by` is the
+  request's own deadline; a wait that runs out leaves the request open. A
+  request or a reply cannot be dropped silently.
 - **Capabilities, not restrictions.** Norn is Turing complete. A program touches
   the world only through a handful of effects, and real actions such as
   spending, mailing or deploying happen inside agent runs, under their own
@@ -101,7 +110,7 @@ their work together borrows its name.
 
 ## Documents
 
-- [Language spec (draft v0)](docs/spec.md)
+- [Language spec (draft v0)](docs/spec.md), with [what changed from the first draft](docs/spec.md#15-changes-from-the-first-draft)
 - [Types and the type checker](docs/types.md)
 - [Syntax tree (AST) and syntax decisions](docs/ast.md)
 - [Durable runtime research](docs/research/runtime.md)
@@ -139,9 +148,9 @@ The [examples](examples) are the programs of spec §3. The
 
 The [playground](https://norn-lang.org/norn/) checks Norn as you type, with
 the same checker as `norn check`, and runs the program in the browser against
-a simulated team: you answer, decline or fail its requests, move the clock and
-fire the host's facts and streams, and watch it wait, time out, hand over and
-finish. It runs the reference runtime with an in-memory store; nothing leaves
+a simulated team: you answer, refuse or break its requests, move the clock and
+fire the host's facts and streams, and watch it wait, run past deadlines, hand
+over and finish. It runs the reference runtime with an in-memory store; nothing leaves
 the page. Its source is in [`playground`](playground); it is the one part of
 this repository with a build step, which bundles it with esbuild and
 CodeMirror.

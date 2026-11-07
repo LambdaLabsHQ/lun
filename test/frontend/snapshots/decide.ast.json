@@ -5,132 +5,53 @@
     "kind": "Program",
     "body": [
       {
-        "kind": "TypeDecl",
-        "name": "probe",
-        "params": [],
-        "definition": {
-          "kind": "VariantType",
-          "constructors": [
-            {
-              "kind": "ConstructorDecl",
-              "name": "Ship",
-              "args": [],
-              "span": {"start": {"line": 3, "column": 14, "offset": 152}, "end": {"line": 3, "column": 18, "offset": 156}}
-            },
-            {
-              "kind": "ConstructorDecl",
-              "name": "Drop",
-              "args": [],
-              "span": {"start": {"line": 3, "column": 21, "offset": 159}, "end": {"line": 3, "column": 25, "offset": 163}}
-            }
-          ],
-          "span": {"start": {"line": 3, "column": 14, "offset": 152}, "end": {"line": 3, "column": 25, "offset": 163}}
-        },
-        "span": {"start": {"line": 3, "column": 1, "offset": 139}, "end": {"line": 3, "column": 25, "offset": 163}}
-      },
-      {
         "kind": "Switch",
         "scrutinee": {
-          "kind": "Call",
+          "kind": "Pipe",
+          "left": {
+            "kind": "Call",
+            "callee": {
+              "kind": "Identifier",
+              "name": "confirm",
+              "span": {"start": {"line": 3, "column": 8, "offset": 133}, "end": {"line": 3, "column": 15, "offset": 140}}
+            },
+            "args": [
+              {
+                "kind": "ParticipantLiteral",
+                "name": "alice",
+                "instance": null,
+                "args": [],
+                "span": {"start": {"line": 3, "column": 16, "offset": 141}, "end": {"line": 3, "column": 22, "offset": 147}}
+              },
+              {
+                "kind": "StringLiteral",
+                "value": "Ship the billing probe?",
+                "span": {"start": {"line": 3, "column": 24, "offset": 149}, "end": {"line": 3, "column": 49, "offset": 174}}
+              },
+              {
+                "kind": "LabelledArg",
+                "label": "by",
+                "value": {
+                  "kind": "TimeLiteral",
+                  "value": "2026-11-07T12:00Z",
+                  "epochMs": 1794052800000,
+                  "offsetMinutes": 0,
+                  "span": {"start": {"line": 3, "column": 55, "offset": 180}, "end": {"line": 3, "column": 72, "offset": 197}}
+                },
+                "span": {"start": {"line": 3, "column": 51, "offset": 176}, "end": {"line": 3, "column": 72, "offset": 197}}
+              }
+            ],
+            "span": {"start": {"line": 3, "column": 8, "offset": 133}, "end": {"line": 3, "column": 73, "offset": 198}}
+          },
           "callee": {
             "kind": "Identifier",
-            "name": "ask",
-            "span": {"start": {"line": 5, "column": 8, "offset": 172}, "end": {"line": 5, "column": 11, "offset": 175}}
+            "name": "wait",
+            "span": {"start": {"line": 3, "column": 75, "offset": 200}, "end": {"line": 3, "column": 79, "offset": 204}}
           },
-          "args": [
-            {
-              "kind": "ParticipantLiteral",
-              "name": "alice",
-              "instance": null,
-              "args": [],
-              "span": {"start": {"line": 5, "column": 12, "offset": 176}, "end": {"line": 5, "column": 18, "offset": 182}}
-            },
-            {
-              "kind": "StringLiteral",
-              "value": "Ship the billing probe?",
-              "span": {"start": {"line": 5, "column": 20, "offset": 184}, "end": {"line": 5, "column": 45, "offset": 209}}
-            },
-            {
-              "kind": "LabelledArg",
-              "label": "options",
-              "value": {
-                "kind": "ListLiteral",
-                "elements": [
-                  {
-                    "kind": "Constructor",
-                    "name": "Ship",
-                    "args": [],
-                    "span": {"start": {"line": 5, "column": 57, "offset": 221}, "end": {"line": 5, "column": 61, "offset": 225}}
-                  },
-                  {
-                    "kind": "Constructor",
-                    "name": "Drop",
-                    "args": [],
-                    "span": {"start": {"line": 5, "column": 63, "offset": 227}, "end": {"line": 5, "column": 67, "offset": 231}}
-                  }
-                ],
-                "rest": null,
-                "span": {"start": {"line": 5, "column": 56, "offset": 220}, "end": {"line": 5, "column": 68, "offset": 232}}
-              },
-              "span": {"start": {"line": 5, "column": 47, "offset": 211}, "end": {"line": 5, "column": 68, "offset": 232}}
-            },
-            {
-              "kind": "LabelledArg",
-              "label": "until",
-              "value": {
-                "kind": "TimeLiteral",
-                "value": "2026-11-07T12:00Z",
-                "epochMs": 1794052800000,
-                "offsetMinutes": 0,
-                "span": {"start": {"line": 5, "column": 77, "offset": 241}, "end": {"line": 5, "column": 94, "offset": 258}}
-              },
-              "span": {"start": {"line": 5, "column": 70, "offset": 234}, "end": {"line": 5, "column": 94, "offset": 258}}
-            }
-          ],
-          "span": {"start": {"line": 5, "column": 8, "offset": 172}, "end": {"line": 5, "column": 95, "offset": 259}}
+          "args": [],
+          "span": {"start": {"line": 3, "column": 8, "offset": 133}, "end": {"line": 3, "column": 79, "offset": 204}}
         },
         "cases": [
-          {
-            "kind": "Case",
-            "pattern": {
-              "kind": "ConstructorPattern",
-              "name": "Done",
-              "args": [
-                {
-                  "kind": "ConstructorPattern",
-                  "name": "Drop",
-                  "args": [],
-                  "span": {"start": {"line": 6, "column": 8, "offset": 269}, "end": {"line": 6, "column": 12, "offset": 273}}
-                }
-              ],
-              "span": {"start": {"line": 6, "column": 3, "offset": 264}, "end": {"line": 6, "column": 13, "offset": 274}}
-            },
-            "guard": null,
-            "body": {
-              "kind": "Call",
-              "callee": {
-                "kind": "Identifier",
-                "name": "run",
-                "span": {"start": {"line": 6, "column": 17, "offset": 278}, "end": {"line": 6, "column": 20, "offset": 281}}
-              },
-              "args": [
-                {
-                  "kind": "ParticipantLiteral",
-                  "name": "auto",
-                  "instance": null,
-                  "args": [],
-                  "span": {"start": {"line": 6, "column": 21, "offset": 282}, "end": {"line": 6, "column": 26, "offset": 287}}
-                },
-                {
-                  "kind": "StringLiteral",
-                  "value": "Record the decision: drop the billing probe",
-                  "span": {"start": {"line": 6, "column": 28, "offset": 289}, "end": {"line": 6, "column": 73, "offset": 334}}
-                }
-              ],
-              "span": {"start": {"line": 6, "column": 17, "offset": 278}, "end": {"line": 6, "column": 74, "offset": 335}}
-            },
-            "span": {"start": {"line": 6, "column": 1, "offset": 262}, "end": {"line": 6, "column": 74, "offset": 335}}
-          },
           {
             "kind": "Case",
             "pattern": {
@@ -138,58 +59,119 @@
               "alternatives": [
                 {
                   "kind": "ConstructorPattern",
-                  "name": "Done",
+                  "name": "Answered",
                   "args": [
                     {
                       "kind": "ConstructorPattern",
-                      "name": "Ship",
+                      "name": "Yes",
                       "args": [],
-                      "span": {"start": {"line": 7, "column": 8, "offset": 343}, "end": {"line": 7, "column": 12, "offset": 347}}
+                      "span": {"start": {"line": 4, "column": 12, "offset": 218}, "end": {"line": 4, "column": 15, "offset": 221}}
                     }
                   ],
-                  "span": {"start": {"line": 7, "column": 3, "offset": 338}, "end": {"line": 7, "column": 13, "offset": 348}}
+                  "span": {"start": {"line": 4, "column": 3, "offset": 209}, "end": {"line": 4, "column": 16, "offset": 222}}
                 },
                 {
                   "kind": "ConstructorPattern",
-                  "name": "TimedOut",
+                  "name": "NoReply",
                   "args": [],
-                  "span": {"start": {"line": 7, "column": 16, "offset": 351}, "end": {"line": 7, "column": 24, "offset": 359}}
+                  "span": {"start": {"line": 4, "column": 19, "offset": 225}, "end": {"line": 4, "column": 26, "offset": 232}}
                 }
               ],
-              "span": {"start": {"line": 7, "column": 3, "offset": 338}, "end": {"line": 7, "column": 24, "offset": 359}}
+              "span": {"start": {"line": 4, "column": 3, "offset": 209}, "end": {"line": 4, "column": 26, "offset": 232}}
             },
             "guard": null,
             "body": {
-              "kind": "Call",
+              "kind": "Pipe",
+              "left": {
+                "kind": "Call",
+                "callee": {
+                  "kind": "Identifier",
+                  "name": "run",
+                  "span": {"start": {"line": 4, "column": 30, "offset": 236}, "end": {"line": 4, "column": 33, "offset": 239}}
+                },
+                "args": [
+                  {
+                    "kind": "ParticipantLiteral",
+                    "name": "auto",
+                    "instance": null,
+                    "args": [],
+                    "span": {"start": {"line": 4, "column": 34, "offset": 240}, "end": {"line": 4, "column": 39, "offset": 245}}
+                  },
+                  {
+                    "kind": "StringLiteral",
+                    "value": "Ship it as recommended: at most US$0.10",
+                    "span": {"start": {"line": 4, "column": 41, "offset": 247}, "end": {"line": 4, "column": 82, "offset": 288}}
+                  }
+                ],
+                "span": {"start": {"line": 4, "column": 30, "offset": 236}, "end": {"line": 4, "column": 83, "offset": 289}}
+              },
               "callee": {
                 "kind": "Identifier",
-                "name": "run",
-                "span": {"start": {"line": 7, "column": 28, "offset": 363}, "end": {"line": 7, "column": 31, "offset": 366}}
+                "name": "wait",
+                "span": {"start": {"line": 4, "column": 85, "offset": 291}, "end": {"line": 4, "column": 89, "offset": 295}}
               },
+              "args": [],
+              "span": {"start": {"line": 4, "column": 30, "offset": 236}, "end": {"line": 4, "column": 89, "offset": 295}}
+            },
+            "span": {"start": {"line": 4, "column": 1, "offset": 207}, "end": {"line": 4, "column": 89, "offset": 295}}
+          },
+          {
+            "kind": "Case",
+            "pattern": {
+              "kind": "ConstructorPattern",
+              "name": "Answered",
               "args": [
                 {
-                  "kind": "ParticipantLiteral",
-                  "name": "auto",
-                  "instance": null,
+                  "kind": "ConstructorPattern",
+                  "name": "No",
                   "args": [],
-                  "span": {"start": {"line": 7, "column": 32, "offset": 367}, "end": {"line": 7, "column": 37, "offset": 372}}
-                },
-                {
-                  "kind": "StringLiteral",
-                  "value": "Ship the billing probe as recommended: at most US$0.10",
-                  "span": {"start": {"line": 7, "column": 39, "offset": 374}, "end": {"line": 7, "column": 95, "offset": 430}}
+                  "span": {"start": {"line": 5, "column": 12, "offset": 307}, "end": {"line": 5, "column": 14, "offset": 309}}
                 }
               ],
-              "span": {"start": {"line": 7, "column": 28, "offset": 363}, "end": {"line": 7, "column": 96, "offset": 431}}
+              "span": {"start": {"line": 5, "column": 3, "offset": 298}, "end": {"line": 5, "column": 15, "offset": 310}}
             },
-            "span": {"start": {"line": 7, "column": 1, "offset": 336}, "end": {"line": 7, "column": 96, "offset": 431}}
+            "guard": null,
+            "body": {
+              "kind": "Pipe",
+              "left": {
+                "kind": "Call",
+                "callee": {
+                  "kind": "Identifier",
+                  "name": "run",
+                  "span": {"start": {"line": 5, "column": 19, "offset": 314}, "end": {"line": 5, "column": 22, "offset": 317}}
+                },
+                "args": [
+                  {
+                    "kind": "ParticipantLiteral",
+                    "name": "auto",
+                    "instance": null,
+                    "args": [],
+                    "span": {"start": {"line": 5, "column": 23, "offset": 318}, "end": {"line": 5, "column": 28, "offset": 323}}
+                  },
+                  {
+                    "kind": "StringLiteral",
+                    "value": "Record the decision: don't ship",
+                    "span": {"start": {"line": 5, "column": 30, "offset": 325}, "end": {"line": 5, "column": 63, "offset": 358}}
+                  }
+                ],
+                "span": {"start": {"line": 5, "column": 19, "offset": 314}, "end": {"line": 5, "column": 64, "offset": 359}}
+              },
+              "callee": {
+                "kind": "Identifier",
+                "name": "wait",
+                "span": {"start": {"line": 5, "column": 66, "offset": 361}, "end": {"line": 5, "column": 70, "offset": 365}}
+              },
+              "args": [],
+              "span": {"start": {"line": 5, "column": 19, "offset": 314}, "end": {"line": 5, "column": 70, "offset": 365}}
+            },
+            "span": {"start": {"line": 5, "column": 1, "offset": 296}, "end": {"line": 5, "column": 70, "offset": 365}}
           },
           {
             "kind": "Case",
             "pattern": {
               "kind": "VarPattern",
               "name": "other",
-              "span": {"start": {"line": 8, "column": 3, "offset": 434}, "end": {"line": 8, "column": 8, "offset": 439}}
+              "span": {"start": {"line": 6, "column": 3, "offset": 368}, "end": {"line": 6, "column": 8, "offset": 373}}
             },
             "guard": null,
             "body": {
@@ -197,23 +179,23 @@
               "callee": {
                 "kind": "Identifier",
                 "name": "fail",
-                "span": {"start": {"line": 8, "column": 12, "offset": 443}, "end": {"line": 8, "column": 16, "offset": 447}}
+                "span": {"start": {"line": 6, "column": 12, "offset": 377}, "end": {"line": 6, "column": 16, "offset": 381}}
               },
               "args": [
                 {
                   "kind": "Identifier",
                   "name": "other",
-                  "span": {"start": {"line": 8, "column": 17, "offset": 448}, "end": {"line": 8, "column": 22, "offset": 453}}
+                  "span": {"start": {"line": 6, "column": 17, "offset": 382}, "end": {"line": 6, "column": 22, "offset": 387}}
                 }
               ],
-              "span": {"start": {"line": 8, "column": 12, "offset": 443}, "end": {"line": 8, "column": 23, "offset": 454}}
+              "span": {"start": {"line": 6, "column": 12, "offset": 377}, "end": {"line": 6, "column": 23, "offset": 388}}
             },
-            "span": {"start": {"line": 8, "column": 1, "offset": 432}, "end": {"line": 8, "column": 23, "offset": 454}}
+            "span": {"start": {"line": 6, "column": 1, "offset": 366}, "end": {"line": 6, "column": 23, "offset": 388}}
           }
         ],
-        "span": {"start": {"line": 5, "column": 1, "offset": 165}, "end": {"line": 9, "column": 2, "offset": 456}}
+        "span": {"start": {"line": 3, "column": 1, "offset": 126}, "end": {"line": 7, "column": 2, "offset": 390}}
       }
     ],
-    "span": {"start": {"line": 1, "column": 1, "offset": 0}, "end": {"line": 10, "column": 1, "offset": 457}}
+    "span": {"start": {"line": 1, "column": 1, "offset": 0}, "end": {"line": 8, "column": 1, "offset": 391}}
   }
 }

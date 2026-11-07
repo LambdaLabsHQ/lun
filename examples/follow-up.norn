@@ -1,9 +1,9 @@
 // A follow-up that hands the same request over from an agent to a person.
 // Handing over moves who continues; it does not undo what the agent may
 // already have done, which the host still reconciles.
-let q = request(@codex, "Is the build machine still overheating?")
-let reply = switch q->wait(~until=1h) {
-| TimedOut => q->handOver(@alice)->wait
-| other => other
+let q = ask(@codex, "Is the build machine still overheating?")
+let reply = switch q->waitUntil(1h) {
+| Some(r) => r
+| None => q->handOver(@alice)->wait
 }
 say(doc"ops#machines", reply?)

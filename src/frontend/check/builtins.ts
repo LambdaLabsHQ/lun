@@ -1,18 +1,18 @@
 /**
  * What every program sees without declaring it: the base types, `list`,
- * `option`, `result`, `outcome`, the three source types, and the built-in
- * functions with the signatures of docs/types.md §5.
+ * `option`, `result`, `reply`, `yesno`, `either`, the three source types, and
+ * the built-in functions with the signatures of docs/types.md §5.
  *
  * In a signature, `'d` is a `deadline` variable, `'t` an `addressee` variable
  * and `'h` a `handled` variable (§3).
  */
 import { TypeTable, typeInfo, type CtorInfo, type TypeInfo } from "./declarations.ts";
 import {
-  FACT, GENERIC, OCCURRENCE, REQUEST, con, fun, newVar, source, type FiniteClass, type TLabel, type TParam, type Type,
+  FACT, GENERIC, OCCURRENCE, REQUEST, con, fun, newVar, requestOf, source, type FiniteClass, type TLabel, type TParam, type Type,
 } from "./types.ts";
 
 /** The effect families of docs/types.md §8, in the order the effects summary lists them. */
-export const FAMILIES = ["ask", "run", "request", "start", "wait", "cancel", "handOver", "say", "judge"] as const;
+export const FAMILIES = ["ask", "confirm", "choose", "run", "wait", "handOver", "cancel", "say", "judge"] as const;
 export type Family = (typeof FAMILIES)[number];
 
 export const BASE_TYPES = ["string", "int", "float", "bool", "unit", "time", "duration", "participant", "ref"] as const;
@@ -27,13 +27,15 @@ export const t = {
   duration: con("duration"),
   participant: con("participant"),
   ref: con("ref"),
+  yesno: con("yesno"),
   list: (element: Type) => con("list", element),
   option: (element: Type) => con("option", element),
   result: (value: Type, error: Type) => con("result", value, error),
-  outcome: (value: Type) => con("outcome", value),
+  reply: (answer: Type) => con("reply", answer),
+  either: (first: Type, second: Type) => con("either", first, second),
   event: (element: Type) => source(FACT, element),
   stream: (element: Type) => source(OCCURRENCE, element),
-  request: (element: Type) => source(REQUEST, element),
+  request: (answer: Type) => requestOf(answer),
 };
 
 const param = (index: number, name: string): TParam => ({ tag: "param", index, name });
@@ -51,7 +53,9 @@ export function builtinTable(): TypeTable {
   const a = param(0, "a");
   variant("option", ["a"], [["None", []], ["Some", [a]]]);
   variant("result", ["a", "e"], [["Ok", [a]], ["Error", [param(1, "e")]]]);
-  variant("outcome", ["a"], [["Done", [a]], ["Declined", [t.string]], ["Failed", [t.string]], ["TimedOut", []], ["Cancelled", []], ["Revoked", []]]);
+  variant("reply", ["a"], [["Answered", [a]], ["Refused", [t.string]], ["NoReply", []], ["Broke", [t.string]], ["Cancelled", []], ["Revoked", []]]);
+  variant("yesno", [], [["Yes", []], ["No", []]]);
+  variant("either", ["a", "b"], [["First", [a]], ["Second", [param(1, "b")]]]);
   const sourceName = (name: string, kind: Type): TypeInfo =>
     typeInfo({ name, kind: "source", origin: "builtin", params: ["a"], sourceKind: kind, equality: { never: false, params: new Set([0]) } });
   table.types.set("event", sourceName("event", FACT));
@@ -60,7 +64,7 @@ export function builtinTable(): TypeTable {
   return table;
 }
 
-/** A built-in value: its generalized type, the effect family it performs, and whether it is `ask`, which is not a value. */
+/** A built-in value: its generalized type, and the effect family it performs. */
 export interface Builtin {
   readonly name: string;
   readonly type: Type;
@@ -68,52 +72,53 @@ export interface Builtin {
 }
 
 const g = (cls: FiniteClass | null = null) => newVar(GENERIC, cls);
-const required = (label: string, type: Type): TLabel => ({ label, type, optional: false });
 const optional = (label: string, type: Type): TLabel => ({ label, type, optional: true });
 
-/** The two types of `ask`. The call site chooses by whether it passes `~options` (§5), so `ask` is not a value. */
-export function askType(withOptions: boolean): Type {
-  if (withOptions) {
-    const a = g();
-    return fun([t.participant, t.string], [required("options", t.list(a)), optional("until", g("deadline"))], t.outcome(a));
-  }
-  return fun([t.participant, t.string], [optional("until", g("deadline"))], t.outcome(t.string));
-}
-
-/** The built-in functions other than `ask`. `report` is the host's type (§7). */
+/** The built-in functions. `report` is the host's type (§7). */
 export function builtinValues(): Builtin[] {
   const report = con("report");
+  const by = () => optional("by", g("deadline"));
   const values: [string, Family | null, () => Type][] = [
-    ["run", "run", () => fun([t.participant, t.string], [optional("context", g()), optional("until", g("deadline"))], t.outcome(report))],
-    ["request", "request", () => fun([t.participant, t.string], [], t.request(t.string))],
-    ["start", "start", () => fun([t.participant, t.string], [optional("context", g())], t.request(report))],
-    ["wait", "wait", () => {
+    ["ask", "ask", () => fun([t.participant, t.string], [by()], t.request(t.string))],
+    ["confirm", "confirm", () => fun([t.participant, t.string], [by()], t.request(t.yesno))],
+    ["choose", "choose", () => {
       const a = g();
-      return fun([source(g(), a)], [optional("until", g("deadline"))], t.outcome(a));
+      return fun([t.participant, t.string, t.list(a)], [by()], t.request(a));
     }],
-    ["cancel", "cancel", () => fun([t.request(g())], [], t.unit)],
+    ["run", "run", () => fun([t.participant, t.string], [optional("context", g()), by()], t.request(report))],
+    ["judge", "judge", () => fun([t.string], [optional("about", g())], t.request(t.bool))],
+    // Waiting on a source gives what it holds: a reply for a request, the value for a fact or a stream.
+    ["wait", "wait", () => {
+      const w = g();
+      return fun([source(g(), w)], [], w);
+    }],
+    ["waitUntil", "wait", () => {
+      const w = g();
+      return fun([source(g(), w), g("deadline")], [], t.option(w));
+    }],
     ["handOver", "handOver", () => {
       const a = g();
       return fun([t.request(a), t.participant], [], t.request(a));
     }],
+    ["cancel", "cancel", () => fun([t.request(g())], [], t.unit)],
     ["status", null, () => {
       const a = g();
-      return fun([t.request(a)], [], t.option(t.outcome(a)));
+      return fun([t.request(a)], [], t.option(t.reply(a)));
     }],
     ["say", "say", () => fun([g("addressee"), t.string], [], t.unit)],
-    ["judge", "judge", () => fun([t.string], [optional("about", g())], t.outcome(t.bool))],
     ["now", null, () => fun([], [], t.time)],
     ["show", null, () => fun([g()], [], t.string)],
-    ["ignore", null, () => fun([g()], [], t.unit)],
-    ["fail", null, () => fun([t.outcome(g())], [], g())],
+    // A reply may be set aside on purpose; a request may not (§6a).
+    ["ignore", null, () => fun([newVar(GENERIC, null, false, null, true)], [], t.unit)],
+    ["fail", null, () => fun([t.reply(g())], [], g())],
     ["every", null, () => fun([t.duration], [], t.stream(t.time))],
     ["after", null, () => fun([g("deadline")], [], t.stream(t.time))],
     ["never", null, () => fun([], [], t.stream(g()))],
-    ["merge", null, () => {
+    ["or", null, () => {
       const a = g();
-      return fun([t.stream(a), t.stream(a)], [], t.stream(a));
+      const b = g();
+      return fun([t.stream(a), t.stream(b)], [], t.stream(t.either(a, b)));
     }],
-    ["or", null, () => fun([t.stream(g()), t.stream(g())], [], t.stream(t.unit))],
     ["map", null, () => {
       const a = g();
       const b = g();

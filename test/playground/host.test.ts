@@ -13,11 +13,11 @@ const external = (name: string) => host.externals.find((candidate) => candidate.
 
 test("the forms follow the host interface's external declarations", () => {
   assert.deepEqual(host.externals.map((e) => `${e.name}: ${e.kind}<${describe(e.element)}>`), [
-    "merged: fact<pr>", "released: fact<release>", "machineUpdated: fact<string>", "replied: fact<message>", "runEnded: fact<outcome<report>>",
+    "merged: fact<pr>", "released: fact<release>", "machineUpdated: fact<string>", "replied: fact<message>", "runEnded: fact<reply<report>>",
     "ciFailed: stream<string>", "prActivity: stream<string>", "docChanged: stream<string>", "message: stream<message>",
   ]);
   assert.equal(external("merged").doc, "The pull request \"owner/repo#n\" has been merged. The value is the pull request.");
-  assert.deepEqual(external("replied").params.map((p) => [p.label, p.optional, describe(p.type)]), [[null, false, "ref"], ["by", true, "participant"]]);
+  assert.deepEqual(external("replied").params.map((p) => [p.label, p.optional, describe(p.type)]), [[null, false, "ref"], ["from", true, "participant"]]);
 });
 
 test("each type of the reference host has a field", () => {
@@ -34,8 +34,8 @@ test("each type of the reference host has a field", () => {
   assert.equal(kinds(fieldFor(external("merged").element, host.types)), "abstract");
   assert.deepEqual(kinds(fieldFor(external("message").element, host.types)), { record: "message", fields: { from: "literal", body: "text" } });
   assert.deepEqual(kinds(fieldFor(external("runEnded").element, host.types)), {
-    variant: "outcome<report>",
-    constructors: { Done: [{ record: "report", fields: { text: "text" } }], Declined: ["text"], Failed: ["text"], TimedOut: [], Cancelled: [], Revoked: [] },
+    variant: "reply<report>",
+    constructors: { Answered: [{ record: "report", fields: { text: "text" } }], Refused: ["text"], NoReply: [], Broke: ["text"], Cancelled: [], Revoked: [] },
   });
   assert.deepEqual(kinds(fieldFor(external("released").params[0]!.type, host.types)), { variant: "channel", constructors: { Beta: [], Stable: [] } });
 });
@@ -47,7 +47,7 @@ test("what is typed becomes the value a program would make, read by Norn's lexer
     value: { type: "record", fields: { from: { type: "participant", name: "codex", instance: "2", labels: {} }, body: { type: "string", value: "LGTM" } } },
   });
   assert.deepEqual(valueOf(field("message"), { fields: { from: "codex", body: "" } }), { ok: false, message: "from: Write a participant as in @alice" });
-  assert.deepEqual(valueOf(field("runEnded"), { choice: "Failed", args: ["Out of disk"] }), { ok: true, value: { type: "variant", name: "Failed", args: [{ type: "string", value: "Out of disk" }] } });
+  assert.deepEqual(valueOf(field("runEnded"), { choice: "Broke", args: ["Out of disk"] }), { ok: true, value: { type: "variant", name: "Broke", args: [{ type: "string", value: "Out of disk" }] } });
   const literal = (type: "ref" | "time" | "duration", input: string) => valueOf({ kind: "literal", type }, input);
   assert.deepEqual(literal("ref", 'doc"ops#machines"'), { ok: true, value: { type: "ref", kind: "doc", value: "ops#machines" } });
   assert.deepEqual(literal("time", "2026-11-07T20:00+08:00"), { ok: true, value: { type: "time", value: String(Date.parse("2026-11-07T12:00Z")) } });
@@ -57,13 +57,13 @@ test("what is typed becomes the value a program would make, read by Norn's lexer
 });
 
 test("a fact fired from the form has the key the program waits on", () => {
-  const program = parse('let r = replied(doc"pr#7", ~by=@alice)->wait?');
+  const program = parse('let r = replied(doc"pr#7", ~from=@alice)->wait');
   assert.ok(program.ok);
-  const by = valueOf({ kind: "literal", type: "participant" }, "@alice");
+  const from = valueOf({ kind: "literal", type: "participant" }, "@alice");
   const ref = valueOf({ kind: "literal", type: "ref" }, 'doc"pr#7"');
-  assert.ok(by.ok && ref.ok);
-  const made = sourceValue(external("replied"), [ref.value, by.value]);
-  const expected: Value = { type: "source", kind: "fact", name: "replied", args: [ref.value], labels: { by: by.value } };
+  assert.ok(from.ok && ref.ok);
+  const made = sourceValue(external("replied"), [ref.value, from.value]);
+  const expected: Value = { type: "source", kind: "fact", name: "replied", args: [ref.value], labels: { from: from.value } };
   assert.equal(eventKey(made), eventKey(expected));
   // An optional label left out is not part of the key.
   assert.deepEqual(sourceValue(external("replied"), [ref.value, null]), { type: "source", kind: "fact", name: "replied", args: [ref.value], labels: {} });

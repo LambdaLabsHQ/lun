@@ -88,7 +88,7 @@ The JSON document carries `"format": "norn-ast"` and a `"version"`, 1 or 2.
 `astToJson` writes the document on one line. The JSON text is canonical,
 because the writer orders the keys itself: the same tree always gives the
 same text, whatever order its objects were built in. Here is
-`q->wait(~until=1h)?`, with no trailing newline, laid out for reading:
+`q->waitUntil(1h)?`, with no trailing newline, laid out for reading:
 
 ```json
 {
@@ -108,28 +108,23 @@ same text, whatever order its objects were built in. Here is
           },
           "callee": {
             "kind": "Identifier",
-            "name": "wait",
-            "span": {"start": {"line": 1, "column": 4, "offset": 3}, "end": {"line": 1, "column": 8, "offset": 7}}
+            "name": "waitUntil",
+            "span": {"start": {"line": 1, "column": 4, "offset": 3}, "end": {"line": 1, "column": 13, "offset": 12}}
           },
           "args": [
             {
-              "kind": "LabelledArg",
-              "label": "until",
-              "value": {
-                "kind": "DurationLiteral",
-                "amount": "1",
-                "unit": "h",
-                "span": {"start": {"line": 1, "column": 16, "offset": 15}, "end": {"line": 1, "column": 18, "offset": 17}}
-              },
-              "span": {"start": {"line": 1, "column": 9, "offset": 8}, "end": {"line": 1, "column": 18, "offset": 17}}
+              "kind": "DurationLiteral",
+              "amount": "1",
+              "unit": "h",
+              "span": {"start": {"line": 1, "column": 14, "offset": 13}, "end": {"line": 1, "column": 16, "offset": 15}}
             }
           ],
-          "span": {"start": {"line": 1, "column": 1, "offset": 0}, "end": {"line": 1, "column": 19, "offset": 18}}
+          "span": {"start": {"line": 1, "column": 1, "offset": 0}, "end": {"line": 1, "column": 17, "offset": 16}}
         },
-        "span": {"start": {"line": 1, "column": 1, "offset": 0}, "end": {"line": 1, "column": 20, "offset": 19}}
+        "span": {"start": {"line": 1, "column": 1, "offset": 0}, "end": {"line": 1, "column": 18, "offset": 17}}
       }
     ],
-    "span": {"start": {"line": 1, "column": 1, "offset": 0}, "end": {"line": 1, "column": 20, "offset": 19}}
+    "span": {"start": {"line": 1, "column": 1, "offset": 0}, "end": {"line": 1, "column": 18, "offset": 17}}
   }
 }
 ```
@@ -160,7 +155,7 @@ Conventions:
   tree either.
 - **No shared objects.** No object appears twice in a tree. Every node, list,
   span and position is a fresh object, even for punned names such as
-  `{count}` or `~until`, as in a tree read back from JSON. A walk that skips
+  `{count}` or `~by`, as in a tree read back from JSON. A walk that skips
   objects it has seen, such as one that numbers nodes, therefore gives the
   same result for a fresh parse and for a JSON round trip.
 
@@ -248,7 +243,7 @@ level.
 
 | Kind | Fields | Source |
 |---|---|---|
-| `Let` | `pattern: Pattern`, `value: Expression` | `let pr = merged("acme/api#1436")->wait?` |
+| `Let` | `pattern: Pattern`, `value: Expression` | `let pr = merged("acme/api#1436")->wait` |
 | `LetRec` | `bindings: RecBinding[]` | `let rec push = () => … and pull = () => …` |
 | `RecBinding` | `name: string`, `value: Lambda` | `push = () => …` |
 
@@ -270,14 +265,14 @@ All of its bindings are in scope in all of its values.
 | `ParticipantLiteral` | `name: string`, `instance: string \| null`, `args: LabelledArg[]` | `@alice`, `@codex:2`, `@auto(~repo="acme/api")` |
 | `RefLiteral` | `refKind: "doc" \| "channel"`, `value: string` | `doc"spec#syntax"` |
 | `Identifier` | `name: string` | `pr` |
-| `Constructor` | `name: string`, `args: Expression[]` | `Ship`, `Done(x)` |
+| `Constructor` | `name: string`, `args: Expression[]` | `Ship`, `Answered(x)` |
 | `TupleLiteral` | `elements: Expression[]` | `(a, b)` |
 | `ListLiteral` | `elements: Expression[]`, `rest: Expression \| null` | `[Ship, Drop]`, `[x, ...rest]` |
 | `RecordLiteral` | `spread: Expression \| null`, `fields: RecordField[]` | `{name: "x", count}`, `{...base, count: 2}` |
 | `RecordField` | `name: string`, `value: Expression` | `count: 2` |
 | `FieldAccess` | `record: Expression`, `field: string` | `release.version` |
-| `Call` | `callee: Expression`, `args: Argument[]` | `ask(@alice, "Ship?", ~until=1h)` |
-| `LabelledArg` | `label: string`, `value: Expression` | `~until=1h` |
+| `Call` | `callee: Expression`, `args: Argument[]` | `ask(@alice, "Ship?", ~by=1h)` |
+| `LabelledArg` | `label: string`, `value: Expression` | `~by=1h` |
 | `Pipe` | `left: Expression`, `callee: Expression`, `args: Argument[]` | `q->handOver(@alice)` |
 | `Try` | `operand: Expression` | `run(@claude, task)?` |
 | `Unary` | `op: "!" \| "-" \| "-."`, `operand: Expression` | `!done` |
@@ -287,7 +282,7 @@ All of its bindings are in scope in all of its values.
 | `Block` | `body: Statement[]` | `{ let x = f(); g(x) }` |
 | `If` | `condition: Expression`, `thenBranch: Block`, `elseBranch: Block \| If \| null` | `if ok { a } else { b }` |
 | `Switch` | `scrutinee: Expression`, `cases: Case[]` | `switch o { … }` |
-| `Case` | `pattern: Pattern`, `guard: Expression \| null`, `body: Expression` | `\| Done(x) if x > 0 => …` |
+| `Case` | `pattern: Pattern`, `guard: Expression \| null`, `body: Expression` | `\| Answered(x) if x > 0 => …` |
 
 Details:
 
@@ -303,8 +298,8 @@ Details:
 - **Constructors.** `Constructor` builds a variant value, and `args` is empty
   for a constructor without a payload.
 - **Arguments.** `Argument` is `Expression | LabelledArg`, in source order,
-  which is evaluation order. A punned `~until` is a `LabelledArg` whose value
-  is an `Identifier` named `until`. The same holds for a punned record field
+  which is evaluation order. A punned `~by` is a `LabelledArg` whose value
+  is an `Identifier` named `by`. The same holds for a punned record field
   `{count}`.
 - **Pipe.** `left->callee(args)` means `callee(left, args)`: `left` becomes
   the first positional argument. `x->f` and `x->f()` both have empty `args`.
@@ -313,7 +308,7 @@ Details:
 - **Unary.** A minus before a number in an expression stays an operator:
   `-1` is a `Unary` around `IntLiteral` `"1"`. Only literal patterns fold the
   sign into the number.
-- **Try** is postfix `?`. On anything but `Done`, `Some` or `Ok`, the
+- **Try** is postfix `?`. On anything but `Answered`, `Some` or `Ok`, the
   enclosing function returns the operand's value at once; at the top of a
   program it ends the program (§5).
 - **Binary operators**, all left-associative, from lowest precedence:
@@ -346,12 +341,12 @@ Details:
 | `WildcardPattern` | — | `_` |
 | `VarPattern` | `name: string` | `other` |
 | `LiteralPattern` | `literal: IntLiteral \| FloatLiteral \| StringLiteral \| BoolLiteral \| UnitLiteral` | `"yes"`, `-1`, `true`, `()` |
-| `ConstructorPattern` | `name: string`, `args: Pattern[]` | `TimedOut`, `Done(Ship)` |
+| `ConstructorPattern` | `name: string`, `args: Pattern[]` | `NoReply`, `Answered(Ship)` |
 | `TuplePattern` | `elements: Pattern[]` | `(a, b)` |
 | `ListPattern` | `elements: Pattern[]`, `rest: Pattern \| null` | `[]`, `[first, ...rest]` |
-| `RecordPattern` | `fields: FieldPattern[]` | `{version, state: Done(_)}` |
-| `FieldPattern` | `name: string`, `pattern: Pattern` | `state: Done(_)` |
-| `OrPattern` | `alternatives: Pattern[]` | `Done(Ship) \| TimedOut` |
+| `RecordPattern` | `fields: FieldPattern[]` | `{version, state: Answered(_)}` |
+| `FieldPattern` | `name: string`, `pattern: Pattern` | `state: Answered(_)` |
+| `OrPattern` | `alternatives: Pattern[]` | `Answered(Yes) \| NoReply` |
 
 - A `ListPattern` without `rest` matches a list of exactly that length.
 - A `RecordPattern` checks only the fields it names. A punned field `{version}`
@@ -371,7 +366,7 @@ annotations (§4).
 | `TypeVar` | `name: string` | `'a` (the name is `a`) |
 | `TupleType` | `elements: TypeExpression[]` | `(int, string)` |
 | `FunctionType` | `params: ParameterType[]`, `result: TypeExpression` | `(string, ~containing: pr) => event<release>` |
-| `LabelledType` | `label: string`, `type: TypeExpression`, `optional: boolean` | `~containing: pr`, `~until: duration=?` |
+| `LabelledType` | `label: string`, `type: TypeExpression`, `optional: boolean` | `~containing: pr`, `~by: duration=?` |
 | `VariantType` | `constructors: ConstructorDecl[]` | `Ship \| Drop \| Later(duration)` |
 | `ConstructorDecl` | `name: string`, `args: TypeExpression[]` | `Later(duration)` |
 | `RecordType` | `fields: FieldDecl[]` | `{version: string}` |
@@ -467,7 +462,7 @@ read two ways, the parser takes the reading below. The spec text itself is
 unchanged.
 
 1. **Case bodies are blocks.** §3's release chain writes two statements after
-   `| Done(release) =>` without braces. As in ReScript, a case body runs to
+   `| Some(release) =>` without braces. As in ReScript, a case body runs to
    the next `|` that starts a case, or to the closing `}`.
 2. **`?` binds tighter than `!` and covers the whole chain on its left.**
    §3 writes `if !judge(…)? {`, which needs `!(judge(…)?)`. It also writes
@@ -479,17 +474,17 @@ unchanged.
    `->`. A line that starts with `->`, `.`, `?` or a binary operator continues
    the expression above it.
 5. **Labelled-parameter aliases and punning.** §8 writes `~every as period`
-   and passes `~options, ~until` without values. These are ReScript's forms,
-   and they are accepted:
+   and passes `~by` without a value. These are ReScript's forms, and they are
+   accepted:
    - `~every as period` binds the argument labelled `every` to `period`;
-   - `~until` alone means `~until=until`.
+   - `~by` alone means `~by=by`.
 6. **`~x=?` is signature notation.** §6.1 writes optional arguments as
-   `~until=?`. That describes built-in signatures. In source it appears only
-   in function types, as in `external run: (participant, string, ~until:
-   duration=?) => outcome<report>`. A user function's optional labelled
+   `~by=?`. That describes built-in signatures. In source it appears only
+   in function types, as in `external run: (participant, string, ~by:
+   duration=?) => request<report>`. A user function's optional labelled
    parameter has a default, as in `~on=[]`, and a call never writes `~x=?`.
-7. **`[a, b]` is a list.** §4 names `list<'a>` and §3 writes
-   `~options=[Ship, Drop]`, so the square-bracket literal builds an immutable
+7. **`[a, b]` is a list.** §4 names `list<'a>` and §6.1 writes
+   `choose(who, question, [A, B])`, so the square-bracket literal builds an immutable
    list. ReScript's arrays and `list{…}` are not part of Norn.
 8. **Time literals.** §4 says a time is "always with its offset". The
    accepted form is `YYYY-MM-DDTHH:MM`, then optionally `:SS`, then `Z` or
@@ -523,7 +518,7 @@ Reading the spec while writing the parser raised two questions. Both are
 settled:
 
 - **The push loop's `?` and its result type.** §3's push loop now ends with
-  `Done(report)`, so both of its paths return an outcome, as the typing of `?`
+  `Answered(report)`, so both of its paths return a reply, as the typing of `?`
   needs ([types](types.md) §4).
 - **Functions that §6 did not define.** `sleepUntil`, `mergeAll` and `name`
   are gone from the spec, `show` is a built-in (§6.1), and `machineUpdated` is

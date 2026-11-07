@@ -51,7 +51,7 @@ export function formatDuration(ms: number): string {
   return parts.join(" ");
 }
 
-/** A value as Norn source would write it: strings quoted, `Done({text: "ok"})`, `@alice`, `2026-11-07T12:00Z`. */
+/** A value as Norn source would write it: strings quoted, `Answered({text: "ok"})`, `@alice`, `2026-11-07T12:00Z`. */
 export function literal(value: Value): string {
   switch (value.type) {
     case "unit":
@@ -94,7 +94,7 @@ export function literal(value: Value): string {
 
 /** A fact or stream as the program made it: `merged("acme/api#1436")`, `ciFailed("acme/api")->or(every(1d))`. */
 export function source(value: Extract<Value, { type: "source" }>): string {
-  if (value.name === "merge" || value.name === "or") {
+  if (value.name === "or") {
     const [first, second] = value.args;
     return `${first === undefined ? "?" : literal(first)}->${value.name}(${second === undefined ? "?" : literal(second)})`;
   }

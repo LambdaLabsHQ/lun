@@ -1,20 +1,20 @@
 # Norn
 
-> Norn is the coordination language for teams of people and AI agents. A Norn program asks, waits, decides and hands work over. Every request ends in an outcome (Done, Declined, Failed, TimedOut, Cancelled or Revoked), and the type checker makes the program handle each one. Status: a design draft with a local reference implementation (parser, type checker, durable evaluator, simulated host). No production host runs it yet.
+> Norn is the coordination language for teams of people and AI agents. A Norn program asks, waits, decides and hands work over. Every request verb (ask, confirm, choose, run, judge) returns a request that the program waits on with ->wait; it ends in a reply (Answered, Refused, NoReply, Broke, Cancelled or Revoked), and the type checker makes the program handle each one and never drop a request. Status: a design draft with a local reference implementation (parser, type checker, durable evaluator, simulated host). No production host runs it yet.
 
-The syntax is ReScript. Participants are values like `@alice`; deadlines are `~until=1h` or a time; facts and streams come from the host. Check a program with `norn check --json file.norn`.
+The syntax is ReScript. Participants are values like `@alice`; a request's own deadline is `~by=1h` or a time, and `->waitUntil(1h)` stops only the wait; facts and streams come from the host. Check a program with `norn check --json file.norn`.
 
 ## Writing Norn
 
-- [Skill: writing Norn](https://raw.githubusercontent.com/norn-lang/norn/main/skills/norn/SKILL.md): the model, the built-ins, the checker's diagnostic codes and how to fix them, and five patterns
+- [Skill: writing Norn](https://raw.githubusercontent.com/norn-lang/norn/main/skills/norn/SKILL.md): the model, the built-ins, the checker's diagnostic codes and how to fix them, and six patterns
 - [Examples](https://github.com/norn-lang/norn/tree/main/examples): a decision with a default, a follow-up with a handover, a release chain, a standing duty, and a "keep going until done" loop
 - [Standard library](https://raw.githubusercontent.com/norn-lang/norn/main/std/std.norn): `remind`, `decide`, `followUp`, `schedule` and `digest`, written in Norn
 - [Reference host interface](https://raw.githubusercontent.com/norn-lang/norn/main/hosts/reference.norn): the facts, streams and types that programs can use with the reference host
 
 ## Reference
 
-- [Language spec](https://raw.githubusercontent.com/norn-lang/norn/main/docs/spec.md): what Norn is, its syntax, effects, standard library, safety rules and runtime protocol
-- [Types](https://raw.githubusercontent.com/norn-lang/norn/main/docs/types.md): inference, built-in signatures, exhaustiveness, the no-dropped-outcomes rule, host interfaces and diagnostics
+- [Language spec](https://raw.githubusercontent.com/norn-lang/norn/main/docs/spec.md): what Norn is, its syntax, effects, standard library, safety rules, runtime protocol, and what changed from the first draft (§15)
+- [Types](https://raw.githubusercontent.com/norn-lang/norn/main/docs/types.md): inference, built-in signatures, exhaustiveness, the rule that requests and replies are never dropped, host interfaces and diagnostics
 - [Syntax tree](https://raw.githubusercontent.com/norn-lang/norn/main/docs/ast.md): the AST and its versioned JSON form
 - [Reference runtime](https://raw.githubusercontent.com/norn-lang/norn/main/docs/reference-runtime.md): how to run programs against the simulated host
 

@@ -9,18 +9,18 @@ const initial: InitialCheckpoint = { executionId: "p", codeId: "code", machineVe
 const stores = { memory: (clock: VirtualClock): DurableStore => new MemoryStore(clock), sqlite: (clock: VirtualClock): DurableStore => new SqliteStore(":memory:", clock) };
 
 for (const [name, open] of Object.entries(stores)) {
-  test(`${name}: a convenience deadline withdraws before accepting a late reply without a scan`, async () => {
+  test(`${name}: a request deadline closes before accepting a late reply without a scan`, async () => {
     const clock = new VirtualClock(), store = open(clock);
     try {
       await store.create(initial);
       const id = requestId("p", 1), wait = waitId("p", 1);
       await store.commit((await store.load("p"))!, { status: "suspended", snapshot: "waiting",
-        requests: [{ holder: "alice", arguments: "question" }],
-        waits: [{ targets: [{ kind: "request", id }], until: 100, withdrawOnTimeout: [id] }], waitingFor: { kind: "wait", id: wait } });
+        requests: [{ holder: "alice", arguments: "question", by: 100 }],
+        waits: [{ targets: [{ kind: "request", id }], until: null }], waitingFor: { kind: "wait", id: wait } });
       clock.advanceTo(101);
-      assert.equal(await store.settleRequest(id, 0, "alice", { tag: "Done", value: "late" }), false);
-      assert.deepEqual((await store.request(id))!.outcome, { tag: "Cancelled" });
-      assert.deepEqual((await store.wait(wait))!.outcome, { tag: "TimedOut" });
+      assert.equal(await store.settleRequest(id, 0, "alice", { tag: "Answered", value: "late" }), false);
+      assert.deepEqual((await store.request(id))!.outcome, { tag: "NoReply" });
+      assert.deepEqual((await store.wait(wait))!.outcome, { tag: "Reply", reply: { tag: "NoReply" } });
       assert.equal((await store.requestEvidence(id))[0].accepted, false);
       assert.equal((await store.effects("p")).find(e => e.operation === "request.offer")!.status, "withdrawn");
     } finally { await store.close(); }
@@ -32,7 +32,7 @@ for (const [name, open] of Object.entries(stores)) {
       await store.create(initial);
       const before = (await store.load("p"))!, id = requestId("p", 1), wait = waitId("p", 1);
       const change = { status: "suspended" as const, snapshot: "waiting" as Json, requests: [{ holder: "alice", arguments: "question" }],
-        waits: [{ targets: [{ kind: "request" as const, id }], until: 100, withdrawOnTimeout: [] }], waitingFor: { kind: "wait" as const, id: wait } };
+        waits: [{ targets: [{ kind: "request" as const, id }], until: 100 }], waitingFor: { kind: "wait" as const, id: wait } };
       const competing = await Promise.all([store.commit(before, change), store.commit(before, change)]);
       assert.equal(competing.filter(Boolean).length, 1);
       const offer = (await store.effects("p"))[0], claim = (await store.claimEffect(offer.id, "worker", 10))!;
@@ -40,13 +40,13 @@ for (const [name, open] of Object.entries(stores)) {
       assert.equal((await store.request(id))!.outcome, null);
       const moved = (await store.handOver(id, 0, "alice", "bob"))!;
       assert.equal(moved.epoch, 1); assert.equal(moved.id, id);
-      assert.equal(await store.settleRequest(id, 0, "alice", { tag: "Done", value: "old reply" }), false);
+      assert.equal(await store.settleRequest(id, 0, "alice", { tag: "Answered", value: "old reply" }), false);
       clock.advanceTo(100); assert.equal((await store.scanReady())[0].executionId, "p");
-      assert.deepEqual((await store.wait(wait))!.outcome, { tag: "TimedOut" });
+      assert.deepEqual((await store.wait(wait))!.outcome, { tag: "Elapsed" });
       assert.equal((await store.request(id))!.outcome, null);
-      assert.ok(await store.settleRequest(id, 1, "bob", { tag: "Done", value: "answer" }));
-      assert.deepEqual((await store.wait(wait))!.outcome, { tag: "TimedOut" });
-      assert.deepEqual((await store.request(id))!.outcome, { tag: "Done", value: "answer" });
+      assert.ok(await store.settleRequest(id, 1, "bob", { tag: "Answered", value: "answer" }));
+      assert.deepEqual((await store.wait(wait))!.outcome, { tag: "Elapsed" });
+      assert.deepEqual((await store.request(id))!.outcome, { tag: "Answered", value: "answer" });
       assert.deepEqual((await store.requestEvidence(id)).map(e => e.accepted), [false, true]);
       const checkpoint = (await store.load("p"))!;
       await store.commit(checkpoint, { status: "cancelled", snapshot: "stopped" });
@@ -102,22 +102,22 @@ for (const [name, open] of Object.entries(stores)) {
       await store.publishEvent("past", "next", "stream", "past");
       for (const [id, targets, until] of [
         ["fact", [{ kind: "event", key: "known", mode: "fact" }], null],
-        ["stream", [{ kind: "event", key: "next", mode: "stream", result: null }], null],
-        ["timer", [{ kind: "timer", at: 100, result: "tick" }], null],
+        ["stream", [{ kind: "event", key: "next", mode: "stream", path: ["Second"] }], null],
+        ["timer", [{ kind: "timer", at: 100, path: ["First"] }], null],
         ["never", [], 100],
       ] as const) {
         await store.create({ ...initial, executionId: id });
-        await store.commit((await store.load(id))!, { status: "suspended", snapshot: null, waits: [{ targets: [...targets], until, withdrawOnTimeout: [] }], waitingFor: { kind: "wait", id: waitId(id, 1) } });
+        await store.commit((await store.load(id))!, { status: "suspended", snapshot: null, waits: [{ targets: targets.map(t => ({...t, ...("path" in t ? {path: [...t.path]} : {})})), until }], waitingFor: { kind: "wait", id: waitId(id, 1) } });
       }
       assert.deepEqual((await store.scanReady()).map(e => e.executionId), ["fact"]);
       await store.publishEvent("self", "next", "stream", "self", "stream");
       assert.equal((await store.wait(waitId("stream", 1)))!.outcome, null);
       clock.advanceTo(99); await store.publishEvent("new", "next", "stream", "discarded");
-      assert.deepEqual((await store.wait(waitId("stream", 1)))!.outcome, { tag: "Done", value: null });
+      assert.deepEqual((await store.wait(waitId("stream", 1)))!.outcome, { tag: "Occurred", value: { type: "variant", name: "Second", args: ["discarded"] } });
       assert.equal(await store.publishEvent("new", "next", "stream", "duplicate"), false);
       clock.advanceTo(100); await store.scanReady();
-      assert.deepEqual((await store.wait(waitId("timer", 1)))!.outcome, { tag: "Done", value: "tick" });
-      assert.deepEqual((await store.wait(waitId("never", 1)))!.outcome, { tag: "TimedOut" });
+      assert.deepEqual((await store.wait(waitId("timer", 1)))!.outcome, { tag: "Occurred", value: { type: "variant", name: "First", args: [{ type: "time", value: "100" }] } });
+      assert.deepEqual((await store.wait(waitId("never", 1)))!.outcome, { tag: "Elapsed" });
       assert.deepEqual((await store.scanReady({ after: "fact", limit: 2 })).map(e => e.executionId), ["never", "stream"]);
       assert.deepEqual(await store.scanReady({ codeId: "another" }), []);
     } finally { await store.close(); }

@@ -18,42 +18,48 @@ export interface EffectDescription {
   arguments: Json;
   kind?: "work" | "notification";
 }
-export interface RequestDescription { holder: string; arguments: Json }
-/** Timeout is a result of waiting, never a terminal request outcome. */
+/** Relative deadlines are resolved once, at the transaction's authority time. */
+export type Deadline = number | { after: number };
+export interface RequestDescription { holder: string; arguments: Json; by?: Deadline | null }
 export type RequestOutcome =
-  | { tag: "Done"; value: Json }
-  | { tag: "Declined" | "Failed"; reason: string }
-  | { tag: "Cancelled" | "Revoked" };
-export interface StoredRequest extends RequestDescription {
+  | { tag: "Answered"; value: Json }
+  | { tag: "Refused" | "Broke"; reason: string }
+  | { tag: "NoReply" | "Cancelled" | "Revoked" };
+export interface StoredRequest extends Omit<RequestDescription, "by"> {
   id: string;
   executionId: string;
   epoch: number;
+  by: number | null;
   outcome: RequestOutcome | null;
   settledAt: number | null;
 }
 export interface RequestEvidence {
   epoch: number;
   holder: string;
-  outcome: RequestOutcome;
+  /** Invalid answers retain their original data without becoming a reply. */
+  outcome: Json;
   receivedAt: number;
   accepted: boolean;
+  invalidReason: string | null;
 }
-/** An optional result pins a constant occurrence payload instead of the incoming value. */
+/** An outer-to-inner constructor path preserves the winning source of nested or. */
+export type SourcePath = readonly ("First" | "Second")[];
 export type WaitTarget =
   | { kind: "request"; id: string }
-  | { kind: "event"; key: string; mode: "fact" | "stream"; result?: Json }
-  | { kind: "timer"; at: number; result?: Json };
-export type WaitOutcome = RequestOutcome | { tag: "TimedOut" };
+  | { kind: "event"; key: string; mode: "fact" | "stream"; path?: SourcePath }
+  | { kind: "timer"; at: number; path?: SourcePath };
+/** Store protocol results are distinct from language replies and event payloads. */
+export type WaitOutcome = { tag: "Reply"; reply: RequestOutcome } | { tag: "Occurred"; value: Json } | { tag: "Elapsed" };
 export interface WaitDescription {
   /** An empty set never fires on its own. */
   targets: WaitTarget[];
-  until: number | null;
-  withdrawOnTimeout: string[];
+  until: Deadline | null;
 }
-export interface StoredWait extends WaitDescription {
+export interface StoredWait extends Omit<WaitDescription, "until"> {
   id: string;
   executionId: string;
   cursor: number;
+  until: number | null;
   outcome: WaitOutcome | null;
 }
 export type RequestAction = { id: string; epoch: number; holder: string } &
@@ -105,6 +111,7 @@ export interface DurableStore {
   request(id: string): Promise<StoredRequest | null>;
   requestEvidence(id: string): Promise<RequestEvidence[]>;
   settleRequest(id: string, epoch: number, holder: string, outcome: RequestOutcome): Promise<boolean>;
+  rejectAnswer(id: string, epoch: number, holder: string, answer: Json, reason: string): Promise<boolean>;
   wait(id: string): Promise<StoredWait | null>;
   publishEvent(id: string, key: string, mode: "fact" | "stream", value: Json, originExecutionId?: string): Promise<boolean>;
   handOver(id: string, epoch: number, holder: string, nextHolder: string): Promise<StoredRequest | null>;
@@ -116,6 +123,31 @@ export interface DurableStore {
   scanEffects(scan?: Scan): Promise<StoredEffect[]>;
   scanReady(scan?: Scan): Promise<Checkpoint[]>;
   close(): Promise<void>;
+}
+
+export function deadlineAt(deadline: Deadline | null | undefined, now: number): number | null {
+  if (deadline == null) return null;
+  const at = typeof deadline === "number" ? deadline : now + deadline.after;
+  if ((typeof deadline !== "number" && (!Number.isSafeInteger(deadline.after) || deadline.after < 0)) ||
+      !Number.isSafeInteger(at) || at < 0) throw new TypeError("Deadline must fit the host clock's nonnegative safe integer milliseconds");
+  return at;
+}
+
+export function projectOccurrence(value: Json, path: SourcePath = []): Json {
+  for (let i = path.length - 1; i >= 0; i--) {
+    if (path[i] !== "First" && path[i] !== "Second") throw new TypeError("Invalid source constructor path");
+    value = { type: "variant", name: path[i], args: [value] };
+  }
+  return value;
+}
+
+/** NoReply is exclusively a clock resolution; hosts cannot declare it. */
+export function validateReply(outcome: RequestOutcome): void {
+  if (!["Answered", "Refused", "Broke", "Cancelled", "Revoked"].includes(outcome.tag) ||
+      (outcome.tag === "Answered" && !Object.hasOwn(outcome, "value")) ||
+      ((outcome.tag === "Refused" || outcome.tag === "Broke") && typeof outcome.reason !== "string")) {
+    throw new TypeError("Invalid request reply; NoReply is decided only by the store clock");
+  }
 }
 
 export function requestId(executionId: string, revision: number, ordinal = 0): string {

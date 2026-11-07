@@ -118,7 +118,7 @@ test("cancellation withdraws queued work atomically but retains terminal notices
   assert.equal(await observer.claimEffect(committed.effects[0].id, "late-sender", 100), null);
   assert.deepEqual((await observer.request(committed.requests[0].id))!.outcome, { tag: "Cancelled" });
   assert.ok((await observer.scanEffects()).every(e => e.kind === "notification"));
-  assert.equal(await observer.settleRequest(committed.requests[0].id, 0, "alice", { tag: "Done", value: "too late" }), false);
+  assert.equal(await observer.settleRequest(committed.requests[0].id, 0, "alice", { tag: "Answered", value: "too late" }), false);
   await assert.rejects(store.commit(cancelled!.checkpoint, { status: "completed", snapshot: null,
     effects: [{ operation: "run", arguments: "new work after termination" }] }), /cannot create new work/);
 });
@@ -177,8 +177,8 @@ test("delivery acknowledgement and weeks-later request outcome are independent",
   assert.deepEqual(await store.scanReady(), []);
   await store.close();
   const later = open();
-  assert.equal(await later.settleRequest(request.id, 0, "alice", { tag: "Done", value: "Ship" }), true);
-  assert.equal(await later.settleRequest(request.id, 0, "alice", { tag: "Done", value: "Drop" }), false);
+  assert.equal(await later.settleRequest(request.id, 0, "alice", { tag: "Answered", value: "Ship" }), true);
+  assert.equal(await later.settleRequest(request.id, 0, "alice", { tag: "Answered", value: "Drop" }), false);
   assert.equal((await later.scanReady())[0].executionId, initial.executionId);
   assert.equal((await later.load(initial.executionId))!.revision, 1); // Input alone never executes code.
   assert.deepEqual((await later.effects(initial.executionId)).find(e => e.id === offer.id)!.receipt, { accepted: true });
@@ -192,9 +192,9 @@ test("handover keeps the request and fences replies from its previous holder", a
   assert.equal(moved.id, request.id);
   assert.equal(moved.epoch, 1);
   assert.equal(moved.outcome, null);
-  assert.equal(await store.settleRequest(request.id, 0, "alice", { tag: "Done", value: "late" }), false);
-  assert.equal(await store.settleRequest(request.id, 1, "alice", { tag: "Done", value: "wrong holder" }), false);
-  assert.equal(await store.settleRequest(request.id, 1, "bob", { tag: "Declined", reason: "busy" }), true);
+  assert.equal(await store.settleRequest(request.id, 0, "alice", { tag: "Answered", value: "late" }), false);
+  assert.equal(await store.settleRequest(request.id, 1, "alice", { tag: "Answered", value: "wrong holder" }), false);
+  assert.equal(await store.settleRequest(request.id, 1, "bob", { tag: "Refused", reason: "busy" }), true);
   assert.equal(await store.handOver(request.id, 1, "bob", "charlie"), null);
   const effects = await store.effects(initial.executionId);
   assert.ok(effects.some(e => e.operation === "request.released"));
@@ -278,10 +278,10 @@ test("pinned code, ABI and terminal state cannot be replaced on resumption", asy
 test("unsupported database versions are refused without rewriting them", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "norn-newer-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  for (const version of [6, 99]) {
+  for (const version of [7, 99]) {
     const path = join(directory, `runtime-${version}.sqlite`);
     const db = new DatabaseSync(path); db.exec(`PRAGMA user_version = ${version}`); db.close();
-    assert.throws(() => new SqliteStore(path), /migration is required/);
+    assert.throws(() => new SqliteStore(path), new RegExp(`version ${version}; this runtime requires 8`));
     const check = new DatabaseSync(path);
     assert.equal(check.prepare("PRAGMA user_version").get()!.user_version, version); check.close();
   }

@@ -3,8 +3,8 @@
  *
  * Hindley–Milner with let-generalization by levels, uncurried labelled
  * functions, the classes of §3, the typing of `?`, nominal records and global
- * constructors. Exhaustiveness, the rules that keep outcomes from being
- * dropped, and the effects summary run over the inferred types afterwards.
+ * constructors. Exhaustiveness, the rules that keep requests and replies from
+ * being dropped, and the effects summary run over the inferred types afterwards.
  *
  * Chains, the spines of calls, pipes, field accesses, `?`, prefix and binary
  * operators, and `else if`, are walked in loops, so a 10,000-link `->` chain
@@ -13,14 +13,15 @@
  */
 import type * as A from "../ast.ts";
 import { STACK_EXHAUSTED, isStackExhausted } from "../diagnostics.ts";
-import { askType, t } from "./builtins.ts";
+import { t } from "./builtins.ts";
+import { REMOVED_CONSTRUCTORS, REMOVED_NAMES, removedLabel } from "./removed.ts";
 import { TypeReader, TypeTable, declareTypes, externalType, type CtorInfo, type TypeInfo } from "./declarations.ts";
 import { both, closest, count, either, ordinal, sortDiagnostics, type CheckDiagnostic, type Code } from "./diagnostics.ts";
 import { effectsSummary, type EffectSummary } from "./effects.ts";
 import { analyzeMatch, type Row } from "./exhaustiveness.ts";
 import { binding, type HostInterface, type ValueBinding } from "./interface.ts";
 import {
-  GENERIC, Namer, SOURCE, UnifyError, con, fun, generalize, instantiate, isOutcome, newVar, printScheme, printType, resolve, sameShape,
+  GENERIC, Namer, SOURCE, UnifyError, con, fun, generalize, instantiate, isReply, isRequest, newVar, printScheme, printType, resolve, sameShape,
   substitute, tuple, unify, type Clash, type ClassName, type TFun, type TLabel, type Type,
 } from "./types.ts";
 
@@ -47,7 +48,7 @@ export interface CheckResult {
   ok: boolean;
   /** Errors and warnings, in source order. */
   diagnostics: CheckDiagnostic[];
-  /** The program's top-level bindings at its end, with their types, as in `remind: (participant, string, ~at: 'a) => outcome<string> where 'a: deadline`. */
+  /** The program's top-level bindings at its end, with their types, as in `remind: (participant, string, ~at: 'a) => reply<string> where 'a: deadline`. */
   bindings: { name: string; type: string }[];
   /** What the program may do, for review (§8); null when it has errors. */
   effects: EffectSummary[] | null;
@@ -140,7 +141,7 @@ interface FunctionContext {
   firstTry: { span: A.Span; family: TryFamily } | null;
 }
 
-type TryFamily = "outcome" | "option" | "result";
+type TryFamily = "reply" | "option" | "result";
 
 /** A pattern match to check for exhaustiveness and unreachable cases once all types are known. */
 interface Match {
@@ -161,11 +162,10 @@ interface Binder {
   readonly within: string;
 }
 
-/** What a call's callee is: its type, a name for messages, whether it is the built-in `ask`, and what it is bound to. */
+/** What a call's callee is: its type, a name for messages, and what it is bound to. */
 interface Callee {
   readonly type: Type;
   readonly name: string | null;
-  readonly ask: boolean;
   readonly binding?: ValueBinding | undefined;
 }
 
@@ -192,12 +192,14 @@ export class Checker {
   private level = 0;
   private readonly functions: FunctionContext[] = [];
   private readonly matches: Match[] = [];
-  /** Statements before the last of their block, with their types: none may be an outcome (§6a). */
+  /** Statements before the last of their block, with their types: none may be a request or a reply (§6a). */
   private readonly statementsBeforeLast: { node: A.Expression; type: Type }[] = [];
   /** The patterns of `let`s and the names they bind (§6a). */
   private readonly lets: { pattern: A.Pattern; bindings: ValueBinding[] }[] = [];
   private readonly patternTypes = new Map<A.Pattern, Type>();
-  private readonly askOptions: { arg: A.LabelledArg; element: Type }[] = [];
+  private readonly chooseOptions: { arg: A.Expression; element: Type }[] = [];
+  /** The program's last expression, if it has one: it must not be a request (§6a). */
+  private programValue: { node: A.Expression; type: Type } | null = null;
   /** Errors in patterns so far, to skip the analysis of a match whose patterns are wrong. */
   private patternErrors = 0;
   /** The node being checked, for the `too-deep` diagnostic. */
@@ -265,7 +267,8 @@ export class Checker {
     switch (clash.kind) {
       case "class": {
         const offending = printType(clash.type, namer);
-        const { code, members } = CLASSES[clash.cls];
+        let { code } = CLASSES[clash.cls];
+        const { members } = CLASSES[clash.cls];
         let { hint } = CLASSES[clash.cls];
         const holder = resolve(clash.inner);
         let inner = "";
@@ -280,7 +283,12 @@ export class Checker {
           }
         }
         if (clash.cls === "discardable" && clash.dropped !== undefined) {
-          hint = `: a value of this type is dropped at ${position(clash.dropped)} without being looked at; handle the outcome with switch, ? or fail, or set it aside with ignore(…)`;
+          const kind = isRequest(clash.type) ? "request" : "reply";
+          code = `dropped-${kind}`;
+          hint = `: a value of this type is dropped at ${position(clash.dropped)} without being looked at; ${DROP_ADVICE[kind]}`;
+        }
+        if (clash.cls === "handled" && isRequest(clash.type)) {
+          hint = ": nothing waits for a request a handler returns; wait for it with ->wait";
         }
         // A part of a larger type, such as the result of a function passed as an argument: name the whole too.
         const whole = resolve(found) !== resolve(clash.type) && resolve(expected) !== resolve(clash.type) ? `, in ${printType(found, namer)}` : "";
@@ -342,7 +350,10 @@ export class Checker {
           break;
         default: {
           const type = this.infer(item);
-          if (item === last) value = type;
+          if (item === last) {
+            value = type;
+            if (program) this.programValue = { node: item, type };
+          }
           else this.statementsBeforeLast.push({ node: item, type });
         }
       }
@@ -442,7 +453,7 @@ export class Checker {
 
   /**
    * After a let generalizes: a value dropped inside it whose type is now
-   * generic must not become an outcome where the binding is used (§6a), as in
+   * generic must not become a request or a reply where the binding is used (§6a), as in
    * a helper that calls a callback and drops its result. Its type variable
    * remembers where the value is dropped.
    */
@@ -506,7 +517,7 @@ export class Checker {
         for (const arg of node.args) this.argument(arg.value, newVar(this.level, null, true), { where: `for ~${arg.label} of a participant` });
         return t.participant;
       case "Identifier":
-        return this.identifier(node, false).type;
+        return this.identifier(node);
       case "Constructor":
         return this.constructor_(node);
       case "TupleLiteral":
@@ -516,7 +527,6 @@ export class Checker {
       case "RecordLiteral":
         return this.record(node);
       case "Call":
-        // A call of a name: the name may be `ask`, whose type the call chooses.
         return this.call(node, this.callee(node.callee), null, node.args);
       case "Lambda":
         return this.lambda(node, null);
@@ -542,7 +552,7 @@ export class Checker {
       case "Pipe":
         return this.call(node, this.callee(node.callee), { expression: node.left, type: inner }, node.args);
       case "Call":
-        return this.call(node, { type: inner, name: null, ask: false }, null, node.args);
+        return this.call(node, { type: inner, name: null }, null, node.args);
       case "FieldAccess":
         return this.field(node, inner);
       case "Try":
@@ -568,11 +578,11 @@ export class Checker {
     this.expect(type, expected, valueSpan(node), context);
   }
 
-  private identifier(node: A.Identifier, callee: boolean): { type: Type; ask: boolean } {
+  private identifier(node: A.Identifier): Type {
     const entry = this.scope.lookup(node.name);
     if (entry === undefined) {
       this.error("unknown-name", `unknown name ${node.name}${this.nameHint(node.name)}`, node.span);
-      return { type: newVar(this.level), ask: false };
+      return newVar(this.level);
     }
     if ("pending" in entry) {
       this.error(
@@ -580,22 +590,11 @@ export class Checker {
         `this default value cannot use ${node.name}: it is the labelled parameter ~${entry.pending.label}, declared later, which is bound only when a caller passes it`,
         node.span,
       );
-      return { type: newVar(this.level), ask: false };
+      return newVar(this.level);
     }
     entry.used = true;
     this.resolutions.set(node, entry);
-    if (entry.ask) {
-      if (!callee) {
-        this.error(
-          "ask-not-a-value",
-          "ask cannot be used as a value: its type depends on whether a call passes ~options, so call it directly, as in ask(who, text)",
-          node.span,
-        );
-        return { type: newVar(this.level), ask: false };
-      }
-      return { type: newVar(this.level), ask: true };
-    }
-    return { type: instantiate(entry.type, this.level), ask: false };
+    return instantiate(entry.type, this.level);
   }
 
   private nameHint(name: string): string {
@@ -605,16 +604,18 @@ export class Checker {
     if (this.std !== null && this.std.exports.some((value) => value.name === name)) {
       return `; ${name} is in the standard library: add open Std at the top of the program`;
     }
+    const removed = REMOVED_NAMES.get(name);
+    if (removed !== undefined) return `; ${removed}`;
     const near = closest(name, this.scope.visible());
     return near === null ? "" : `; did you mean ${near}?`;
   }
 
   private callee(node: A.Expression): Callee {
     if (node.kind === "Identifier") {
-      const { type, ask } = this.identifier(node, true);
-      return { type, name: node.name, ask, binding: this.resolutions.get(node) };
+      const type = this.identifier(node);
+      return { type, name: node.name, binding: this.resolutions.get(node) };
     }
-    return { type: this.infer(node), name: null, ask: false };
+    return { type: this.infer(node), name: null };
   }
 
   /**
@@ -624,8 +625,7 @@ export class Checker {
    */
   private call(node: A.Call | A.Pipe, callee: Callee, first: { expression: A.Expression; type: Type } | null, args: readonly A.Argument[]): Type {
     const calleeNode = node.callee;
-    const type = callee.ask ? instantiate(askType(args.some((arg) => arg.kind === "LabelledArg" && arg.label === "options")), this.level) : callee.type;
-    const shape = resolve(type);
+    const shape = resolve(callee.type);
     const name = callee.name;
     if (shape.tag === "var") return this.callUnknown(node, shape, first, args);
     if (shape.tag !== "fun") {
@@ -659,7 +659,10 @@ export class Checker {
       if (arg.kind !== "LabelledArg") {
         const param = shape.params[index];
         if (param === undefined) this.infer(arg);
-        else this.argument(arg, param, { where: `for the ${ordinal(index)} argument of ${name ?? "this function"}`, hint: builtinHint(callee, index) });
+        else {
+          this.argument(arg, param, { where: `for the ${ordinal(index)} argument of ${name ?? "this function"}` });
+          if (index === 2 && isBuiltin(callee, "choose")) this.options(arg, param);
+        }
         index += 1;
         continue;
       }
@@ -671,12 +674,12 @@ export class Checker {
       labels.add(arg.label);
       const param = shape.labels.find((label) => label.label === arg.label);
       if (param === undefined) {
-        this.error("unknown-label", unknownLabel(name, arg.label, shape), arg.span);
+        const removed = callee.binding?.origin === "builtin" && name !== null ? removedLabel(name, arg.label) : null;
+        this.error("unknown-label", removed ?? unknownLabel(name, arg.label, shape), arg.span);
         unknown.push(arg.label);
         this.infer(arg.value);
         continue;
       }
-      if (callee.ask && arg.label === "options") this.options(arg, param.type);
       this.argument(arg.value, param.type, { where: `for ~${arg.label} of ${name ?? "this function"}` });
     }
     // A required label that an unknown one nearly spells is reported with the unknown one.
@@ -713,21 +716,20 @@ export class Checker {
     return result;
   }
 
-  /** `ask`'s options: a nonempty list of constructors of one variant type (§5). */
-  private options(arg: A.LabelledArg, type: Type): void {
+  /** `choose`'s options: a nonempty list of constructors of one variant type (§5). */
+  private options(arg: A.Expression, type: Type): void {
     const list = resolve(type);
     const element = list.tag === "con" && list.name === "list" ? list.args[0]! : newVar(this.level);
-    if (arg.value.kind === "ListLiteral" && arg.value.elements.length === 0 && arg.value.rest === null) {
-      this.error("ask-options", "expected at least one option for ask, found an empty list", arg.value.span);
+    if (arg.kind === "ListLiteral" && arg.elements.length === 0 && arg.rest === null) {
+      this.error("choose-options", "expected at least one option for choose, found an empty list", arg.span);
     }
-    this.askOptions.push({ arg, element });
+    this.chooseOptions.push({ arg, element });
   }
 
   private constructor_(node: A.Constructor): Type {
     const ctor = this.table.constructors.get(node.name);
     if (ctor === undefined) {
-      const near = closest(node.name, this.table.constructors.keys());
-      this.error("unknown-constructor", `unknown constructor ${node.name}${near === null ? "" : `; did you mean ${near}?`}`, node.span);
+      this.error("unknown-constructor", `unknown constructor ${node.name}${constructorHint(node.name, this.table)}`, node.span);
       for (const arg of node.args) this.infer(arg);
       return newVar(this.level);
     }
@@ -850,9 +852,9 @@ export class Checker {
       this.expect(recordType, con(info.name, ...args), node.record.span, { where: `for the record whose field ${node.field} is read` });
     } else if (info?.kind !== "record") {
       const found = printType(shape);
-      const hint = shape.tag === "con" && (shape.name === "outcome" || shape.name === "option" || shape.name === "result")
+      const hint = shape.tag === "con" && (shape.name === "reply" || shape.name === "option" || shape.name === "result")
         ? "; take the value out first, with ? or switch"
-        : "";
+        : isRequest(shape) ? "; wait for the request first, with ->wait" : "";
       this.error("type-mismatch", `expected a record with the field ${node.field}, found ${found}${hint}`, node.record.span, { expected: `a record with the field ${node.field}`, found });
       return newVar(this.level);
     }
@@ -866,18 +868,18 @@ export class Checker {
   }
 
   /**
-   * `e?` (§4): on `outcome<'a>`, `option<'a>` or `result<'a, 'e>` it is `'a`,
+   * `e?` (§4): on `reply<'a>`, `option<'a>` or `result<'a, 'e>` it is `'a`,
    * and the enclosing function must return the same family, with the same
    * error type for a result. At the top of a program it adds no constraint.
-   * While the family of `e` is unknown, it is taken to be `outcome`.
+   * While the family of `e` is unknown, it is taken to be `reply`.
    */
   private tryExpression(node: A.Try, operand: Type): Type {
     const shape = resolve(operand);
     let family: TryFamily;
     let value: Type;
     let error: Type | null = null;
-    if (shape.tag === "con" && shape.name === "outcome") {
-      family = "outcome";
+    if (shape.tag === "con" && shape.name === "reply") {
+      family = "reply";
       value = shape.args[0]!;
     } else if (shape.tag === "con" && shape.name === "option") {
       family = "option";
@@ -887,17 +889,18 @@ export class Checker {
       value = shape.args[0]!;
       error = shape.args[1]!;
     } else if (shape.tag === "var") {
-      family = "outcome";
+      family = "reply";
       value = newVar(this.level);
-      if (!this.expect(operand, t.outcome(value), node.operand.span, { where: "before ?" })) return value;
+      if (!this.expect(operand, t.reply(value), node.operand.span, { where: "before ?" })) return value;
     } else {
       const found = printType(shape);
-      this.error("try-operand", `expected an outcome, option or result before ?, found ${found}`, node.span, { expected: "outcome<'a>, option<'a> or result<'a, 'e>", found });
+      const hint = isRequest(shape) ? ": ? does not wait; wait for the request first, with ->wait?" : "";
+      this.error("try-operand", `expected a reply, option or result before ?, found ${found}${hint}`, node.span, { expected: "reply<'a>, option<'a> or result<'a, 'e>", found });
       return newVar(this.level);
     }
     const context = this.functions.at(-1);
     if (context === undefined) return value;
-    const returned = family === "outcome" ? t.outcome(newVar(this.level))
+    const returned = family === "reply" ? t.reply(newVar(this.level))
       : family === "option" ? t.option(newVar(this.level))
       : t.result(newVar(this.level), error!);
     try {
@@ -1147,8 +1150,7 @@ export class Checker {
         const inner: Binder = { ...binder, parameter: null };
         if (ctor === undefined) {
           this.patternErrors += 1;
-          const near = closest(node.name, this.table.constructors.keys());
-          this.error("unknown-constructor", `unknown constructor ${node.name}${near === null ? "" : `; did you mean ${near}?`}`, node.span);
+          this.error("unknown-constructor", `unknown constructor ${node.name}${constructorHint(node.name, this.table)}`, node.span);
           for (const arg of node.args) this.pattern(arg, newVar(this.level), inner);
           return;
         }
@@ -1194,7 +1196,8 @@ export class Checker {
       const namer = new Namer();
       const expected = printType(type, namer);
       const found = printType(patternType, namer);
-      this.error("type-mismatch", `expected a pattern of type ${expected}, found one of type ${found}`, node.span, { expected, found });
+      const hint = isRequest(type) && isReply(patternType) ? "; this is a request: wait for its reply with ->wait" : "";
+      this.error("type-mismatch", `expected a pattern of type ${expected}, found one of type ${found}${hint}`, node.span, { expected, found });
     }
   }
 
@@ -1283,21 +1286,21 @@ export class Checker {
   // After inference --------------------------------------------------------------
 
   private finish(): void {
-    for (const { arg, element } of this.askOptions) {
+    for (const { arg, element } of this.chooseOptions) {
       const shape = resolve(element);
       if (shape.tag === "var") continue;
       const info = shape.tag === "con" ? this.table.types.get(shape.name) : undefined;
       if (info?.kind === "variant") continue;
       const found = printType(t.list(shape));
       this.error(
-        "ask-options",
-        `expected constructors of one variant type for ~options of ask, found ${found}; declare the choices as a type, as in type choice = Yes | No`,
-        arg.value.span,
+        "choose-options",
+        `expected constructors of one variant type for the options of choose, found ${found}; declare the choices as a type, as in type choice = Ship | Drop`,
+        arg.span,
         { expected: "list<'a> where 'a is a variant type", found },
       );
     }
     for (const match of this.matches) if (!match.broken) this.analyze(match);
-    this.outcomes();
+    this.drops();
   }
 
   private analyze(match: Match): void {
@@ -1319,7 +1322,7 @@ export class Checker {
       } else {
         const node = match.node as A.Pattern;
         const what = match.kind === "let"
-          ? "a let takes apart only a value that always matches, such as a tuple or a record; use switch, or ? on an outcome, option or result"
+          ? "a let takes apart only a value that always matches, such as a tuple or a record; use switch, or ? on a reply, option or result"
           : "a parameter takes apart only a value that always matches; switch on the value inside the function instead";
         this.error("refutable-pattern", `this pattern does not match every value: it misses ${either(missing)}; ${what}`, node.span, { missing });
       }
@@ -1335,33 +1338,54 @@ export class Checker {
     }
   }
 
-  /** §6a: an outcome is handled, propagated, ended with `fail`, returned or set aside with `ignore`, never dropped. */
-  private outcomes(): void {
-    const advice = "handle it with switch, ? or fail, or write ignore(…) to drop it on purpose";
+  /**
+   * §6a: a request is waited on, handed over, returned or cancelled, and a
+   * reply is handled, propagated, ended with `fail`, returned or set aside
+   * with `ignore`. Neither is dropped.
+   */
+  private drops(): void {
+    const kindOf = (type: Type): "request" | "reply" | null => (isRequest(type) ? "request" : isReply(type) ? "reply" : null);
     for (const { node, type } of this.statementsBeforeLast) {
-      if (!isOutcome(type)) continue;
+      const kind = kindOf(type);
+      if (kind === null) continue;
       this.cursor = node;
-      this.error("dropped-outcome", `this ${printType(type)} is dropped: only the last statement of a block gives its value; ${advice}`, node.span, { found: printType(type) });
+      this.error(`dropped-${kind}`, `this ${printType(type)} is dropped: only the last statement of a block gives its value; ${DROP_ADVICE[kind]}`, node.span, { found: printType(type) });
     }
     for (const { pattern, bindings } of this.lets) {
       for (const node of patternNodes(pattern)) {
         const type = this.patternTypes.get(node);
-        if (node.kind !== "WildcardPattern" || type === undefined || !isOutcome(type)) continue;
-        const what = node === pattern ? "let _ = … drops this" : "this _ drops an";
-        this.error("dropped-outcome", `${what} ${printType(type)}; ${advice}`, node.span, { found: printType(type) });
+        const kind = node.kind === "WildcardPattern" && type !== undefined ? kindOf(type) : null;
+        if (kind === null) continue;
+        const what = node === pattern ? "let _ = … drops this" : "this _ drops a";
+        this.error(`dropped-${kind}`, `${what} ${printType(type!)}; ${DROP_ADVICE[kind]}`, node.span, { found: printType(type!) });
       }
       for (const value of bindings) {
-        if (value.used || !isOutcome(value.type)) continue;
-        this.error(
-          "unused-outcome",
-          `${value.name} holds an ${printType(value.type)} that is never used; handle it with switch, ? or fail, or write ignore(${value.name}) to drop it on purpose`,
-          value.node!.span,
-          { found: printType(value.type) },
-        );
+        const kind = value.used ? null : kindOf(value.type);
+        if (kind === null) continue;
+        const advice = kind === "request"
+          ? `wait for it with ${value.name}->wait, hand it over, return it, or cancel(${value.name})`
+          : `handle it with switch, ? or fail, or write ignore(${value.name}) to drop it on purpose`;
+        this.error(`unused-${kind}`, `${value.name} holds a ${printType(value.type)} that is never used; ${advice}`, value.node!.span, { found: printType(value.type) });
       }
+    }
+    const last = this.programValue;
+    if (last !== null && isRequest(last.type)) {
+      this.cursor = last.node;
+      this.error(
+        "dropped-request",
+        `this ${printType(last.type)} is the program's last value, so nothing waits for it, and it is cancelled when the program ends; ${DROP_ADVICE.request}`,
+        last.node.span,
+        { found: printType(last.type) },
+      );
     }
   }
 }
+
+/** What to do instead of dropping a request or a reply (§6a). */
+const DROP_ADVICE = {
+  request: "wait for it with ->wait, hand it over with handOver, return it, or call it off with cancel(…)",
+  reply: "handle it with switch, ? or fail, or write ignore(…) to drop it on purpose",
+} as const;
 
 // Helpers ------------------------------------------------------------------------
 
@@ -1372,12 +1396,18 @@ const CLASSES: { readonly [C in ClassName]: { code: Code; name: string; members:
   addressee: { code: "not-an-addressee", name: "an addressee (participant or ref)", members: "participant or ref", hint: "" },
   handled: {
     code: "not-handled",
-    name: "what a forEach handler returns (() or an outcome)",
-    members: "() or an outcome",
+    name: "what a forEach handler returns (() or a reply)",
+    members: "() or a reply",
     hint: ": a forEach handler returns one of them; wrap a value that does not matter in ignore(…)",
   },
   equality: { code: "not-comparable", name: "comparable with ==", members: "a type without functions", hint: ": functions cannot be compared" },
-  discardable: { code: "dropped-outcome", name: "not an outcome", members: "a value that is not an outcome", hint: "" },
+  discardable: { code: "dropped-reply", name: "neither a request nor a reply", members: "a value that is neither a request nor a reply", hint: "" },
+  ignorable: {
+    code: "dropped-request",
+    name: "not a request",
+    members: "a value that is not a request",
+    hint: ": ignore cannot set a request aside, since nothing would wait for it; wait for it with ->wait, hand it over, return it, or cancel(…) it",
+  },
 };
 
 /** Calls, pipes, field accesses, `?`, prefix and binary operators: the inner link of each, or null. */
@@ -1386,7 +1416,7 @@ function spineChild(node: A.Expression): A.Expression | null {
     case "Pipe":
       return node.left;
     case "Call":
-      // A call of a name is a chain's base: the name may be `ask`.
+      // A call of a name is a chain's base.
       return node.callee.kind === "Identifier" ? null : node.callee;
     case "FieldAccess":
       return node.record;
@@ -1430,7 +1460,7 @@ function position(span: A.Span): string {
 }
 
 function article(family: TryFamily): string {
-  return family === "outcome" ? "an outcome" : family === "option" ? "an option" : "a result";
+  return family === "reply" ? "a reply" : family === "option" ? "an option" : "a result";
 }
 
 function arithmeticHint(op: string): (expected: Type, found: Type) => string {
@@ -1446,21 +1476,32 @@ function arithmeticHint(op: string): (expected: Type, found: Type) => string {
   };
 }
 
-/** Advice when an outcome, option or result is found where its value is expected: a ? may be missing. */
+/**
+ * Advice when a request is found where its reply or value is expected, a
+ * `->wait` may be missing; when a reply, option or result is, a `?`.
+ */
 function unwrapHint(expected: Type, found: Type): string {
   const e = resolve(expected);
   const f = resolve(found);
-  const families = ["outcome", "option", "result"];
-  if (e.tag === "var" || f.tag !== "con" || !families.includes(f.name)) return "";
+  if (e.tag === "var" || f.tag !== "con") return "";
+  if (isRequest(f) && !(e.tag === "con" && e.name === SOURCE)) return "; this is a request: wait for its reply with ->wait";
+  const families = ["reply", "option", "result"];
+  if (!families.includes(f.name)) return "";
   if (e.tag === "con" && families.includes(e.name)) return "";
-  const what = f.name === "outcome" ? "outcome" : f.name;
-  return `; take the value out of the ${what} with ? or switch`;
+  return `; take the value out of the ${f.name} with ? or switch`;
 }
 
-/** Advice for a built-in's argument of the wrong type. */
-function builtinHint(callee: Callee, index: number): ((expected: Type, found: Type) => string) | undefined {
-  if (callee.binding?.origin !== "builtin" || callee.name !== "merge" || index !== 1) return undefined;
-  return (_, found) => (resolve(found).tag === "con" ? "; merge keeps the values of two streams of one type: to wake on either of two streams, use or" : "");
+/** Whether a call's callee is the built-in of this name. */
+function isBuiltin(callee: Callee, name: string): boolean {
+  return callee.binding?.origin === "builtin" && callee.name === name;
+}
+
+/** The hint for an unknown constructor: what replaced a removed one, or the nearest one declared. */
+function constructorHint(name: string, table: TypeTable): string {
+  const removed = REMOVED_CONSTRUCTORS.get(name);
+  if (removed !== undefined) return `; ${removed}`;
+  const near = closest(name, table.constructors.keys());
+  return near === null ? "" : `; did you mean ${near}?`;
 }
 
 function unknownLabel(name: string | null, label: string, shape: TFun): string {

@@ -1,9 +1,7 @@
-// A decision with a declared default. The options are a type, so an answer
-// the host cannot map to an option is never taken as consent.
-type probe = Ship | Drop
-
-switch ask(@alice, "Ship the billing probe?", ~options=[Ship, Drop], ~until=2026-11-07T12:00Z) {
-| Done(Drop) => run(@auto, "Record the decision: drop the billing probe")
-| Done(Ship) | TimedOut => run(@auto, "Ship the billing probe as recommended: at most US$0.10")
+// A decision with a declared default. Only the request's own deadline takes
+// the recommendation: a refusal is not consent.
+switch confirm(@alice, "Ship the billing probe?", ~by=2026-11-07T12:00Z)->wait {
+| Answered(Yes) | NoReply => run(@auto, "Ship it as recommended: at most US$0.10")->wait
+| Answered(No) => run(@auto, "Record the decision: don't ship")->wait
 | other => fail(other)
 }

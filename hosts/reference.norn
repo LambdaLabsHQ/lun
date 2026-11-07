@@ -18,7 +18,7 @@ type channel = Beta | Stable
 // A release published on a channel.
 type release = {version: string}
 
-// What a run reports when it ends. `run` and `start` return one.
+// What a run reports when it ends: the answer of a `run` request.
 type report = {text: string}
 
 // A message posted in a conversation or a document's discussion. Its field
@@ -41,11 +41,11 @@ external released: (channel, ~containing: pr) => event<release>
 external machineUpdated: (~machine: string, ~atLeast: string) => event<string>
 
 // The message that the reference points at has a reply, from anyone or, with
-// `~by`, from that participant. The value is the reply.
-external replied: (ref, ~by: participant=?) => event<message>
+// `~from`, from that participant. The value is the reply.
+external replied: (ref, ~from: participant=?) => event<message>
 
 // The run that the reference points at has ended. The value is how it ended.
-external runEnded: (ref) => event<outcome<report>>
+external runEnded: (ref) => event<reply<report>>
 
 // Streams ------------------------------------------------------------------
 

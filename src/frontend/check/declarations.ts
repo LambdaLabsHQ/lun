@@ -8,8 +8,9 @@
  */
 import type * as A from "../ast.ts";
 import { closest, type CheckDiagnostic } from "./diagnostics.ts";
+import { REMOVED_TYPES } from "./removed.ts";
 import {
-  FACT, GENERIC, OCCURRENCE, REQUEST, SOURCE, con, fun, newVar, rebuild, source, tuple, type EqualityRule, type TLabel, type TParam, type Type,
+  FACT, GENERIC, OCCURRENCE, REQUEST, SOURCE, con, fun, newVar, rebuild, requestOf, source, tuple, type EqualityRule, type TLabel, type TParam, type Type,
   type TypeFacts,
 } from "./types.ts";
 
@@ -164,9 +165,10 @@ export class TypeReader {
     const info = this.table.types.get(node.name);
     const args = node.args.map((arg) => this.read(arg, variables));
     if (info === undefined) {
+      const removed = REMOVED_TYPES.get(node.name);
       const hint = node.name === "source"
         ? "; write event<…>, stream<…> or request<…>"
-        : suggestion(closest(node.name, this.table.types.keys()));
+        : removed !== undefined ? `; ${removed}` : suggestion(closest(node.name, this.table.types.keys()));
       this.report({ severity: "error", code: "unknown-type", message: `unknown type ${node.name}${hint}`, span: node.span });
       return UNREADABLE;
     }
@@ -183,7 +185,8 @@ export class TypeReader {
     }
     switch (info.kind) {
       case "source":
-        return source(info.sourceKind!, args[0]!);
+        // A request<'a> is waited on for a reply<'a>.
+        return info.sourceKind === REQUEST ? requestOf(args[0]!) : source(info.sourceKind!, args[0]!);
       case "alias":
         return rebuild(this.aliasOf(info), (leaf) => (leaf.tag === "param" && leaf.index >= 0 ? args[leaf.index]! : leaf));
       default:

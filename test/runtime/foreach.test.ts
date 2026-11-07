@@ -30,29 +30,29 @@ async function offered(store: SqliteStore): Promise<StoredRequest> {
 
 test("one failed run reports its outcome and does not end a standing duty", async () => {
   const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
-  const runtime = new Runtime(source('ciFailed("acme/api")->forEach(_ => run(@auto, "Check health"))'), store, host);
+  const runtime = new Runtime(source('ciFailed("acme/api")->forEach(_ => run(@auto, "Check health")->wait)'), store, host);
   try {
     await runtime.create("p"); await host.pump(runtime);
     await host.emit("first", ci, text("first incident")); await host.pump(runtime);
     const first = await offered(store);
-    await host.reply(first, variant("Failed", text("temporary failure"))); await host.pump(runtime);
+    await host.reply(first, variant("Broke", text("temporary failure"))); await host.pump(runtime);
     assert.equal((await store.load("p"))!.status, "suspended");
     const notices = (await store.effects("p")).filter(effect => effect.operation === "execution.handler_failed");
     assert.equal(notices.length, 1);
     assert.equal(notices[0].kind, "notification");
     assert.equal(notices[0].status, "delivered");
-    assert.deepEqual(notices[0].arguments, variant("Failed", text("temporary failure")));
+    assert.deepEqual(notices[0].arguments, variant("Broke", text("temporary failure")));
     await host.emit("second", ci, text("second incident")); await host.pump(runtime);
     const second = await offered(store);
     assert.notEqual(second.id, first.id);
-    await host.reply(second, variant("Done", text("healthy"))); await host.pump(runtime);
+    await host.reply(second, variant("Answered", {type: "record", fields: {text: text("healthy")}})); await host.pump(runtime);
     assert.equal((await store.load("p"))!.status, "suspended");
     assert.equal((await store.effects("p")).filter(effect => effect.operation === "execution.handler_failed").length, 1);
   } finally { await store.close(); }
 });
 
 test("every unsuccessful handler outcome reports once and takes the next occurrence", async () => {
-  for (const expression of ['Declined("no")', 'Failed("fault")', 'TimedOut', 'Cancelled', 'Revoked']) {
+  for (const expression of ['Refused("no")', 'Broke("fault")', 'NoReply', 'Cancelled', 'Revoked']) {
     const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
     const runtime = new Runtime(source(`ciFailed("acme/api")->forEach(_ => ${expression})`), store, host);
     try {
@@ -71,7 +71,7 @@ test("competing resumptions and restart cannot duplicate a handler failure inten
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const clock = new VirtualClock();
   let store = new SqliteStore(path, clock), host = new SimulatedHost(store, clock);
-  const runtime = new Runtime(source('ciFailed("acme/api")->forEach(_ => Failed("retry later"))'), store, host);
+  const runtime = new Runtime(source('ciFailed("acme/api")->forEach(_ => Broke("retry later"))'), store, host);
   await runtime.create("p"); await host.pump(runtime);
   await host.emit("first", ci, text("incident"));
   const commits = await Promise.all([runtime.step("p"), runtime.step("p")]);
@@ -90,7 +90,7 @@ test("competing resumptions and restart cannot duplicate a handler failure inten
 });
 
 test("successful and unchecked ordinary callback values are discarded without a failure notice", async () => {
-  for (const expression of ['()', 'Done("ok")', '1', 'false', '"unused"', 'None', '{unused: 1}']) {
+  for (const expression of ['()', 'Answered("ok")', '1', 'false', '"unused"', 'None', '{unused: 1}']) {
     const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
     const runtime = new Runtime(source(`ciFailed("acme/api")->forEach(_ => ${expression})`), store, host);
     try {
@@ -104,13 +104,13 @@ test("successful and unchecked ordinary callback values are discarded without a 
 
 test("explicit fail in a handler terminates the program and stops further occurrences", async () => {
   const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
-  const runtime = new Runtime(source('ciFailed("acme/api")->forEach(_ => fail(Failed("stop")))'), store, host);
+  const runtime = new Runtime(source('ciFailed("acme/api")->forEach(_ => fail(Broke("stop")))'), store, host);
   try {
     await runtime.create("p"); await host.pump(runtime);
     await host.emit("first", ci, text("incident")); await host.pump(runtime);
     const failed = (await store.load("p"))!;
     assert.equal(failed.status, "failed");
-    assert.deepEqual((failed.snapshot as { control: unknown }).control, { kind: "failed", outcome: variant("Failed", text("stop")) });
+    assert.deepEqual((failed.snapshot as { control: unknown }).control, { kind: "failed", outcome: variant("Broke", text("stop")) });
     const notices = await store.effects("p");
     assert.equal(notices.length, 1); assert.equal(notices[0].operation, "execution.failed");
     await host.emit("second", ci, text("incident"));
@@ -120,7 +120,7 @@ test("explicit fail in a handler terminates the program and stops further occurr
 });
 
 test("ignore evaluates its argument, can be piped, and explicitly discards an outcome", async () => {
-  const code = source('(ignore(1), Failed("explicitly ignored")->ignore)');
+  const code = source('(ignore(1), Broke("explicitly ignored")->ignore)');
   assert.deepEqual(advance(code, start(code)).control, { kind: "done", value: { type: "tuple", values: [unit, unit] } });
   const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
   const runtime = new Runtime(source('ignore(say(@alice, "Still evaluated"))'), store, host);
@@ -132,13 +132,13 @@ test("ignore evaluates its argument, can be piped, and explicitly discards an ou
   } finally { await store.close(); }
   for (const expression of ['ignore()', 'ignore(1, 2)', 'ignore(1, ~unused=2)']) {
     const invalid = source(expression);
-    assert.equal(advance(invalid, start(invalid)).control.kind, "failed", expression);
+    assert.equal(advance(invalid, start(invalid)).control.kind, "error", expression);
   }
 });
 
 test("ignore on a handler outcome suppresses automatic failure reporting", async () => {
   const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
-  const runtime = new Runtime(source('ciFailed("acme/api")->forEach(_ => Failed("ignored")->ignore)'), store, host);
+  const runtime = new Runtime(source('ciFailed("acme/api")->forEach(_ => Broke("ignored")->ignore)'), store, host);
   try {
     await runtime.create("p"); await host.pump(runtime);
     await host.emit("first", ci, text("incident")); await host.pump(runtime);
@@ -148,13 +148,13 @@ test("ignore on a handler outcome suppresses automatic failure reporting", async
 });
 
 test("an older machine ABI cannot silently adopt the new handler semantics", async () => {
-  const code = source('ciFailed("acme/api")->forEach(_ => Failed("old semantics"))');
+  const code = source('ciFailed("acme/api")->forEach(_ => Broke("old semantics"))');
   const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
   try {
     await store.saveCode(code.id, code.ast);
     await store.create({ executionId: "old", codeId: code.id, machineVersion: "norn-cek:2", status: "ready", snapshot: { ...start(code), version: "norn-cek:2" } as unknown as Json });
-    const before = await store.load("old"), restored = await Runtime.restore("old", store, host);
-    await assert.rejects(restored.step("old"), /machine ABI mismatch/);
+    const before = await store.load("old");
+    await assert.rejects(Runtime.restore("old", store, host), /norn-cek:2.*norn-cek:4/);
     assert.deepEqual(await store.load("old"), before);
   } finally { await store.close(); }
 });

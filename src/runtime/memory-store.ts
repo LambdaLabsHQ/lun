@@ -1,6 +1,6 @@
 import { systemClock, type Clock } from "./clock.ts";
 import {
-  effectId, requestId, waitId, encodeJson,
+  effectId, requestId, waitId, encodeJson, deadlineAt, projectOccurrence, validateReply,
   type Checkpoint, type CheckpointChange, type Commit, type DispatchClaim, type DurableStore,
   type ExecutionStatus, type InitialCheckpoint, type Json, type RequestOutcome, type RequestEvidence,
   type RetryEvidence, type Scan, type StoredEffect, type StoredRequest, type StoredWait, type WaitOutcome,
@@ -68,7 +68,9 @@ export class MemoryStore implements DurableStore {
     if (this.state.executions.has(initial.executionId)) return false;
     this.state.executions.set(initial.executionId, value); return true;
   }
-  async load(id: string): Promise<Checkpoint | null> { this.open(); return copy(this.state.executions.get(id) ?? null); }
+  async load(id: string): Promise<Checkpoint | null> {
+    return this.transaction(() => { this.resolveWaits(this.time()); return copy(this.state.executions.get(id) ?? null); });
+  }
   private insert(id: string, executionId: string, revision: number, ordinal: number, operation: string, args: Json,
     kind: "work" | "notification"): StoredEffect {
     if (this.state.effects.has(id)) throw new Error(`Duplicate effect ${id}`);
@@ -98,18 +100,20 @@ export class MemoryStore implements DurableStore {
     this.withdraw(r.id);
     this.notice(r, "released", "request.released", { requestId: r.id, epoch: r.epoch, holder: r.holder, nextHolder });
     const next = { ...r, epoch: r.epoch + 1, holder: nextHolder }; this.state.requests.set(r.id, next);
-    this.notice(next, "offer", "request.offer", { requestId: next.id, epoch: next.epoch, holder: nextHolder, arguments: next.arguments }, "work");
+    this.notice(next, "offer", "request.offer", { requestId: next.id, epoch: next.epoch, holder: nextHolder, by: next.by, arguments: next.arguments }, "work");
     return next;
   }
   async commit(expected: Checkpoint, change: CheckpointChange): Promise<Commit | null> {
     if (!Number.isSafeInteger(expected.revision) || expected.revision < 0 || !Number.isSafeInteger(expected.revision + 1)) {
       throw new TypeError("Checkpoint revision must be a nonnegative safe integer");
     }
-    const now = this.time(), snapshot = copy(change.snapshot);
+    const snapshot = copy(change.snapshot);
     const effects = (change.effects ?? []).map(e => ({ ...e, arguments: copy(e.arguments) }));
     const requests = (change.requests ?? []).map(r => ({ ...r, arguments: copy(r.arguments) }));
     if (terminal.has(change.status) && (change.waits?.length || requests.length || effects.some(e => (e.kind ?? "work") === "work"))) throw new Error("A terminal transition cannot create new work");
     return this.transaction(() => {
+      const now = this.time();
+      this.resolveWaits(now);
       const current = this.state.executions.get(expected.executionId);
       if (!current || current.revision !== expected.revision || current.codeId !== expected.codeId || current.machineVersion !== expected.machineVersion || terminal.has(current.status)) return null;
       for (const action of change.requestActions ?? []) {
@@ -123,19 +127,19 @@ export class MemoryStore implements DurableStore {
       const savedRequests = requests.map((r, index): StoredRequest => {
         const id = requestId(current.executionId, revision, index);
         if (this.state.requests.has(id)) throw new Error(`Duplicate request ${id}`);
-        const request: StoredRequest = { ...r, id, executionId: current.executionId, epoch: 0, outcome: null, settledAt: null };
+        const request: StoredRequest = { ...r, by: deadlineAt(r.by, now), id, executionId: current.executionId, epoch: 0, outcome: null, settledAt: null };
         this.state.requests.set(id, request);
-        savedEffects.push(this.notice(request, "offer", "request.offer", { requestId: id, epoch: 0, holder: r.holder, arguments: r.arguments }, "work"));
+        savedEffects.push(this.notice(request, "offer", "request.offer", { requestId: id, epoch: 0, holder: r.holder, by: request.by, arguments: r.arguments }, "work"));
         return request;
       });
       const savedWaits = (change.waits ?? []).map((input, index) => {
-        const description = copy(input);
+        const description = { ...copy(input), until: deadlineAt(input.until, now) };
         if (description.until !== null) clock(description.until);
         for (const target of description.targets) {
           if (target.kind === "timer") clock(target.at);
+          if (target.kind !== "request") projectOccurrence(null, target.path);
           if (target.kind === "request" && this.state.requests.get(target.id)?.executionId !== current.executionId) throw new Error("Cannot wait on another execution's request");
         }
-        for (const id of description.withdrawOnTimeout) if (this.state.requests.get(id)?.executionId !== current.executionId) throw new Error("Cannot withdraw another execution's request");
         const id = waitId(current.executionId, revision, index);
         if (this.state.waits.has(id)) throw new Error(`Duplicate wait ${id}`);
         this.state.waits.set(id, { ...description, id, executionId: current.executionId, cursor: this.state.sequence, outcome: null });
@@ -157,60 +161,76 @@ export class MemoryStore implements DurableStore {
             this.state.effects.set(id, { ...lease, effect: { ...lease.effect, status: "withdrawn", detail: "execution terminated" } });
           }
         }
-        for (const r of this.state.requests.values()) if (r.executionId === current.executionId && r.outcome === null) this.finish(r, { tag: change.status === "revoked" ? "Revoked" : "Cancelled" }, now);
+        for (const r of this.state.requests.values()) if (r.executionId === current.executionId && r.outcome === null) this.finish(r, { tag: "Cancelled" }, now);
       }
       this.resolveWaits(now);
-      return copy({ checkpoint, effects: savedEffects, requests: savedRequests, waits: savedWaits.map(id => this.state.waits.get(id)!) });
+      return copy({ checkpoint, effects: savedEffects.map(e => this.state.effects.get(e.id)!.effect), requests: savedRequests.map(r => this.state.requests.get(r.id)!), waits: savedWaits.map(id => this.state.waits.get(id)!) });
     });
   }
   async effects(id: string): Promise<StoredEffect[]> {
     this.open(); return copy([...this.state.effects.values()].map(l => l.effect).filter(e => e.executionId === id)
       .sort((a, b) => a.revision - b.revision || a.ordinal - b.ordinal || compare(a.id, b.id)));
   }
-  async request(id: string): Promise<StoredRequest | null> { this.open(); return copy(this.state.requests.get(id) ?? null); }
+  async request(id: string): Promise<StoredRequest | null> {
+    return this.transaction(() => { this.resolveWaits(this.time()); return copy(this.state.requests.get(id) ?? null); });
+  }
   async requestEvidence(id: string): Promise<RequestEvidence[]> { this.open(); return copy(this.state.evidence.get(id) ?? []); }
   async settleRequest(id: string, epoch: number, holder: string, outcome: RequestOutcome): Promise<boolean> {
-    const at = this.time(), result = copy(outcome);
-    if (!["Done", "Declined", "Failed", "Cancelled", "Revoked"].includes(result.tag) || (result.tag === "Done" && !Object.hasOwn(result, "value")) ||
-        ((result.tag === "Declined" || result.tag === "Failed") && typeof result.reason !== "string")) throw new TypeError("Invalid request outcome");
+    const result = copy(outcome);
+    validateReply(result);
     return this.transaction(() => {
+      const at = this.time();
       this.resolveWaits(at); const r = this.state.requests.get(id); if (!r) return false;
       const accepted = r.epoch === epoch && r.holder === holder && r.outcome === null && !terminal.has(this.state.executions.get(r.executionId)!.status);
-      this.state.evidence.set(id, [...(this.state.evidence.get(id) ?? []), { epoch, holder, outcome: result, receivedAt: at, accepted }]);
+      this.state.evidence.set(id, [...(this.state.evidence.get(id) ?? []), { epoch, holder, outcome: result as unknown as Json, receivedAt: at, accepted, invalidReason: null }]);
       if (accepted) { this.finish(r, result, at); this.resolveWaits(at); } return accepted;
+    });
+  }
+  async rejectAnswer(id: string, epoch: number, holder: string, answer: Json, reason: string): Promise<boolean> {
+    const value = copy(answer);
+    return this.transaction(() => {
+      const at = this.time();
+      this.resolveWaits(at); if (!this.state.requests.has(id)) return false;
+      this.state.evidence.set(id, [...(this.state.evidence.get(id) ?? []), { epoch, holder, outcome: value, receivedAt: at, accepted: false, invalidReason: reason }]);
+      return true;
     });
   }
   async handOver(id: string, epoch: number, holder: string, nextHolder: string): Promise<StoredRequest | null> {
     return this.transaction(() => {
+      this.resolveWaits(this.time());
       const r = this.state.requests.get(id);
       if (!r || r.epoch !== epoch || r.holder !== holder || r.outcome !== null || terminal.has(this.state.executions.get(r.executionId)!.status)) return null;
       return copy(this.move(r, nextHolder));
     });
   }
-  async wait(id: string): Promise<StoredWait | null> { this.open(); return copy(this.state.waits.get(id) ?? null); }
+  async wait(id: string): Promise<StoredWait | null> {
+    return this.transaction(() => { this.resolveWaits(this.time()); return copy(this.state.waits.get(id) ?? null); });
+  }
   private resolveWaits(now: number): void {
+    for (const r of this.state.requests.values()) {
+      if (r.outcome === null && r.by !== null && r.by <= now && !terminal.has(this.state.executions.get(r.executionId)!.status)) {
+        this.finish(r, { tag: "NoReply" }, r.by);
+      }
+    }
     for (const wait of this.state.waits.values()) {
       if (wait.outcome !== null || terminal.has(this.state.executions.get(wait.executionId)!.status)) continue;
       const candidates: { at: number; priority: number; outcome: WaitOutcome }[] = [];
-      if (wait.until !== null && wait.until <= now) candidates.push({ at: wait.until, priority: 0, outcome: { tag: "TimedOut" } });
+      if (wait.until !== null && wait.until <= now) candidates.push({ at: wait.until, priority: 0, outcome: { tag: "Elapsed" } });
       for (const target of wait.targets) {
         if (target.kind === "request") {
           const r = this.state.requests.get(target.id)!;
-          if (r.outcome !== null && r.settledAt !== null && r.settledAt <= now) candidates.push({ at: r.settledAt, priority: 1, outcome: r.outcome });
+          if (r.outcome !== null && r.settledAt !== null && r.settledAt <= now) candidates.push({ at: r.settledAt, priority: r.outcome.tag === "NoReply" ? -1 : 1, outcome: { tag: "Reply", reply: r.outcome } });
         } else if (target.kind === "timer") {
-          if (target.at <= now) candidates.push({ at: target.at, priority: 1, outcome: { tag: "Done", value: Object.hasOwn(target, "result") ? target.result! : { type: "time", value: String(target.at) } } });
+          if (target.at <= now) candidates.push({ at: target.at, priority: 1, outcome: { tag: "Occurred", value: projectOccurrence({ type: "time", value: String(target.at) }, target.path) } });
         } else {
           const event = [...this.state.events.values()].filter(e => e.key === target.key && e.mode === target.mode && e.at <= now && e.seq > (target.mode === "fact" ? 0 : wait.cursor) && e.origin !== wait.executionId)
             .sort((a, b) => a.at - b.at || a.seq - b.seq)[0];
-          if (event) candidates.push({ at: event.at, priority: 1, outcome: { tag: "Done", value: Object.hasOwn(target, "result") ? target.result! : event.value } });
+          if (event) candidates.push({ at: event.at, priority: 1, outcome: { tag: "Occurred", value: projectOccurrence(event.value, target.path) } });
         }
       }
       const first = candidates.sort((a, b) => a.at - b.at || a.priority - b.priority)[0];
       if (!first) continue;
       this.state.waits.set(wait.id, { ...wait, outcome: copy(first.outcome) });
-      if (first.outcome.tag === "TimedOut") for (const id of wait.withdrawOnTimeout) {
-        const r = this.state.requests.get(id)!; if (r.outcome === null) this.finish(r, { tag: "Cancelled" }, first.at);
-      }
     }
   }
   async publishEvent(id: string, key: string, mode: "fact" | "stream", value: Json, originExecutionId?: string): Promise<boolean> {
@@ -234,6 +254,7 @@ export class MemoryStore implements DurableStore {
   }
   async claimEffect(id: string, owner: string, leaseMs: number): Promise<DispatchClaim | null> {
     const now = this.time(); clock(now, leaseMs); if (!owner) throw new TypeError("A dispatch claim needs an owner");
+    this.transaction(() => this.resolveWaits(now));
     const lease = this.state.effects.get(id);
     if (!lease || !["pending", "dispatching", "uncertain"].includes(lease.effect.status) || lease.until > now || (lease.effect.status === "pending" && !this.canSend(lease.effect))) return null;
     const mode = lease.effect.status === "pending" ? "send" : "reconcile";
@@ -242,6 +263,7 @@ export class MemoryStore implements DurableStore {
   }
   async prepareRetry(claim: DispatchClaim, evidence: RetryEvidence): Promise<DispatchClaim | null> {
     const now = this.time();
+    this.transaction(() => this.resolveWaits(now));
     if (!["host-deduplicates-original-id", "previous-sender-fenced-and-host-confirmed-absent"].includes(evidence)) throw new TypeError("Retry requires host evidence");
     const lease = this.claim(claim, now);
     if (!lease || lease.effect.status !== "uncertain" || !this.canSend(lease.effect)) return null;
@@ -249,19 +271,24 @@ export class MemoryStore implements DurableStore {
     return copy({ ...claim, mode: "send", effect });
   }
   async markUncertain(claim: DispatchClaim, detail: string): Promise<boolean> {
+    this.transaction(() => this.resolveWaits(this.time()));
     const lease = this.claim(claim, this.time()); if (!lease) return false;
     this.state.effects.set(lease.effect.id, { ...lease, owner: null, until: 0, effect: { ...lease.effect, status: "blocked", detail } }); return true;
   }
   async provideEvidence(id: string, detail: string): Promise<boolean> {
-    this.open(); const lease = this.state.effects.get(id); if (!lease || lease.effect.status !== "blocked") return false;
+    this.transaction(() => this.resolveWaits(this.time()));
+    const lease = this.state.effects.get(id); if (!lease || lease.effect.status !== "blocked") return false;
     this.state.effects.set(id, { ...lease, until: 0, effect: { ...lease.effect, status: "uncertain", detail } }); return true;
   }
   async recordDelivery(claim: DispatchClaim, receipt: Json): Promise<boolean> {
-    const now = this.time(), result = copy(receipt), lease = this.claim(claim, now); if (!lease) return false;
+    const now = this.time(), result = copy(receipt);
+    this.transaction(() => this.resolveWaits(now));
+    const lease = this.claim(claim, now); if (!lease) return false;
     this.state.effects.set(lease.effect.id, { ...lease, owner: null, until: 0, effect: { ...lease.effect, status: "delivered", receipt: result, detail: null } }); return true;
   }
   async scanEffects(scan: Scan = {}): Promise<StoredEffect[]> {
     const now = this.time(), count = limit(scan);
+    this.transaction(() => this.resolveWaits(now));
     return copy([...this.state.effects.values()].filter(l => l.effect.id > (scan.after ?? "") &&
       ((l.effect.status === "pending" && this.canSend(l.effect)) || (["dispatching", "uncertain"].includes(l.effect.status) && l.until <= now)))
       .sort((a, b) => compare(a.effect.id, b.effect.id)).slice(0, count).map(l => l.effect));

@@ -4,17 +4,18 @@
  * bindings.
  */
 import type { CheckDiagnostic, EffectSummary } from "../../src/frontend/check/index.ts";
+import type { Family } from "../../src/frontend/check/builtins.ts";
 import { named, problemCount, type CheckReport } from "./check.ts";
 
 /** What each effect family does, in words, for the effects summary. */
-const FAMILY_WORDS: Record<string, string> = {
-  ask: "asks, and waits for the answer",
-  run: "hands over a task, and waits for its report",
-  request: "asks without waiting",
-  start: "hands over a task without waiting",
+const FAMILY_WORDS: Record<Family, string> = {
+  ask: "asks a question",
+  confirm: "asks for a yes or a no",
+  choose: "asks for one of the options",
+  run: "hands over a task",
   wait: "waits for a request, a fact or a stream",
-  cancel: "calls a request off",
   handOver: "gives a request to someone else",
+  cancel: "calls a request off",
   say: "posts a message",
   judge: "asks the host’s judge whether a condition holds",
 };

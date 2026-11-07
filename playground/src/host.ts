@@ -91,7 +91,9 @@ function variable(type: string): A.TypeVar {
 }
 
 const BUILTIN_VARIANTS: Record<string, { params: string[]; constructors: [string, A.TypeExpression[]][] }> = {
-  outcome: { params: ["a"], constructors: [["Done", [variable("a")]], ["Declined", [name("string")]], ["Failed", [name("string")]], ["TimedOut", []], ["Cancelled", []], ["Revoked", []]] },
+  reply: { params: ["a"], constructors: [["Answered", [variable("a")]], ["Refused", [name("string")]], ["NoReply", []], ["Broke", [name("string")]], ["Cancelled", []], ["Revoked", []]] },
+  yesno: { params: [], constructors: [["Yes", []], ["No", []]] },
+  either: { params: ["a", "b"], constructors: [["First", [variable("a")]], ["Second", [variable("b")]]] },
   option: { params: ["a"], constructors: [["None", []], ["Some", [variable("a")]]] },
   result: { params: ["a", "e"], constructors: [["Ok", [variable("a")]], ["Error", [variable("e")]]] },
 };

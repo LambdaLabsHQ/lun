@@ -5,7 +5,7 @@
  */
 import type * as A from "../ast.ts";
 import { STACK_EXHAUSTED, isStackExhausted } from "../diagnostics.ts";
-import { askType, builtinTable, builtinValues, type Family } from "./builtins.ts";
+import { builtinTable, builtinValues, type Family } from "./builtins.ts";
 import { TypeReader, declareTypes, externalType, typeInfo, type Origin, type TypeTable } from "./declarations.ts";
 import { sortDiagnostics, type CheckDiagnostic } from "./diagnostics.ts";
 import type { Type } from "./types.ts";
@@ -20,8 +20,6 @@ export interface ValueBinding {
   lambda: A.Lambda | null;
   /** The effect family a built-in performs. */
   readonly family: Family | null;
-  /** The built-in `ask`, whose type the call site chooses (§5). */
-  readonly ask: boolean;
   /** Where the name is bound. */
   readonly node: A.AstNode | null;
   /** For a parameter of a function: which one, by position or label. */
@@ -31,7 +29,7 @@ export interface ValueBinding {
 }
 
 export function binding(fields: Partial<ValueBinding> & Pick<ValueBinding, "name" | "type" | "origin">): ValueBinding {
-  return { lambda: null, family: null, ask: false, node: null, parameter: null, used: false, ...fields };
+  return { lambda: null, family: null, node: null, parameter: null, used: false, ...fields };
 }
 
 /** What a host lets its programs see. */
@@ -83,19 +81,18 @@ function declare(program: A.Program, table: TypeTable, values: Map<string, Value
     }
   }
   declareTypes(table, decls, "host", report, true);
-  // run and start give the host's report. A host that does not declare it gets an abstract one.
+  // run gives the host's report. A host that does not declare it gets an abstract one.
   const declared = table.types.get("report");
   if (declared === undefined) table.types.set("report", typeInfo({ name: "report", kind: "abstract", origin: "host" }));
   else if (declared.params.length > 0) {
     report({
       severity: "error",
       code: "type-arity",
-      message: "expected no type parameters for report, found " + declared.params.length + ": report is what run and start return, as in outcome<report>",
+      message: "expected no type parameters for report, found " + declared.params.length + ": report is what run answers, as in request<report>",
       span: declared.decl!.span,
     });
   }
 
-  values.set("ask", binding({ name: "ask", type: askType(false), origin: "builtin", family: "ask", ask: true }));
   for (const builtin of builtinValues()) {
     values.set(builtin.name, binding({ name: builtin.name, type: builtin.type, origin: "builtin", family: builtin.family }));
   }

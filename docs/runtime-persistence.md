@@ -18,16 +18,21 @@ such as negative zero need an explicit evaluator representation.
 requests. Two workers at the same revision cannot both commit. Terminal
 executions cannot resume. Successful completion still drains messages already
 committed by the program. Cancellation, revocation or failure withdraws queued
-work and closes open requests; terminal notices remain deliverable. Already
+work. Every kind of program ending, including successful completion, closes
+its still-open requests as `Cancelled`; terminal notices remain deliverable. Already
 dispatched work cannot be undone by changing a database row.
 
 A **delivery** records whether an original message was delivered. A **request**
 independently records the current holder, assignment epoch and a single terminal
-outcome. Delivery acknowledgement never substitutes for a person's answer.
-`TimedOut` belongs to a wait and is not a terminal request outcome. Request
-outcomes are `Done`, `Declined`, `Failed`, `Cancelled` or `Revoked`.
+reply and absolute `by` deadline. Delivery acknowledgement never substitutes
+for a person's answer. Replies are `Answered`, `Refused`, `Broke`, `NoReply`,
+`Cancelled` or `Revoked`. Only the authority clock can produce `NoReply`.
+A request closes at `by` even if nobody waits on it or scans at the boundary.
+Replies, handovers, dispatch claims, status reads and recovery resolve expired
+requests before proceeding. A reply exactly at `by` is too late. Relative
+deadlines are converted once, using commit time, not a caller-supplied timestamp.
 
-`handOver` keeps the request ID, advances its epoch, withdraws an unsent old
+`handOver` keeps the request ID and original absolute deadline, advances its epoch, withdraws an unsent old
 offer, notifies the previous holder and offers it to the next. Old holders
 cannot settle it. Settlement atomically records the result, withdraws queued
 offers and queues a terminal notice. This does not undo work a previous holder
@@ -56,18 +61,34 @@ Only `provideEvidence` makes it eligible for another reconciliation. Obsolete
 unconfirmed request offers become `superseded`; release/closure notices remain
 deliverable, and no worker keeps reclaiming the old offer.
 
-A wait persists its target set, deadline, event cursor and terminal outcome. The
-target set may include requests, external facts/occurrences and timers.
-An empty target set, used by `never()`, stays suspended unless its deadline
-expires or the execution is terminated. An event/timer target may pin a constant
-`result` payload; `or` uses unit so its inputs cannot leak their values, even
-inside a `merge`. The projection is stored with registration and survives restart.
-Observing an existing fact and recording a stream cursor happen in the same
-transaction as registration. Self-caused events are ignored. Deadlines are
-exclusive: an answer at the deadline loses to timeout. An `ask`-style timeout
-withdraws its request; an explicit handle wait leaves it open. Late inputs
-cannot overwrite a stored wait outcome. Validated late/obsolete request answers
-are kept as evidence with an accepted flag, without reopening the request.
+A wait persists its target set, independent observation deadline, event cursor
+and result. An empty set, used by `never()`, has no occurrences. At this storage
+boundary `StoredWait.outcome` is one of:
+
+- `{tag: "Reply", reply}` for a request's terminal reply;
+- `{tag: "Occurred", value}` for an event or timer's actual payload;
+- `{tag: "Elapsed"}` when only the observation deadline passed.
+
+These tags are storage data, not constructors programs use. `wait` returns a
+request's reply or an event's value. `waitUntil` returns `Some` of that value
+or `None`; it never cancels the observed request. A request's `NoReply` at the
+same instant as the observation deadline wins (`Some(NoReply)`). Other replies
+and occurrences must precede that deadline strictly. An already resolved wait
+is immutable, so later inputs cannot reverse an earlier observation timeout.
+
+Each event/timer target can persist a `path`, an outer-to-inner array of
+`First`/`Second` constructors. `or` composes paths without replacing the
+occurrence's value. Both paths and selected values survive restart. Facts may
+predate registration; streams use a cursor captured in the registration
+transaction. Self-caused occurrences are ignored and event IDs deduplicate
+inputs. No physical delivery or live permission is inferred from a timer.
+
+A valid late or obsolete reply is retained with `accepted: false`. Invalid
+answers use `rejectAnswer`, which retains the original JSON and an
+`invalidReason` without assigning any reply. In particular, an unrecognized
+answer is not `Refused`. Production hosts validate their own reply schemas and
+current authority before settlement; the reference simulated host performs
+these checks for its declared interface.
 
 Storage owns the trusted clock, injected into `SqliteStore` at construction.
 Production defaults to the local system clock; tests share a `VirtualClock` with
@@ -91,10 +112,12 @@ recording an input alone never runs user code.
 
 SQLite uses full synchronous commits and serializes initialization and writes.
 Connection startup leaves journal mode unchanged to avoid a concurrent WAL-mode
-initialization race. Experimental schema version 7 refuses older/newer versions;
+initialization race. Experimental schema version 8 refuses older/newer versions;
 it does not silently reinterpret snapshots or rewrite an unsupported store.
-The machine ABI is `norn-cek:3`: it includes the handler-report suspension and
-the `status` shape `None` or `Some(outcome)`. A failed handler's notification
+The machine ABI is `norn-cek:4`: it includes request-returning verbs, distinct
+request replies and event values, observation-only `waitUntil`, and tagged `or`.
+Version errors name the stored and required versions. The previous schema 7 /
+ABI 3 is refused; neither adapter silently migrates or reinterprets its state. A failed handler's notification
 intent and continuation past reporting commit together under the same revision.
 Earlier experimental stores and checkpoints need their matching runtime; this
 prototype does not migrate them or silently change their built-in semantics.
@@ -107,7 +130,7 @@ processes running as the same OS user.
 Run the focused persistence checks with:
 
 ```sh
-node --experimental-strip-types --test test/runtime/store.test.ts
+node --test test/runtime/store.test.ts test/runtime/store-contract.test.ts test/runtime/reply-contract.test.ts
 ```
 
 They cover restart and SIGKILL recovery, competing workers, cancellation,
