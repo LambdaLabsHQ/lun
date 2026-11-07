@@ -1,21 +1,22 @@
 /**
- * The review column: the checker's diagnostics in its own words, what the
- * program may do, and the types of its top-level bindings.
+ * The review at the top of the run column: the checker's diagnostics in its
+ * own words, what the program may do, and the types of its top-level
+ * bindings.
  */
 import type { CheckDiagnostic, EffectSummary } from "../../src/frontend/check/index.ts";
 import { named, problemCount, type CheckReport } from "./check.ts";
 
 /** What each effect family does, in words, for the effects summary. */
 const FAMILY_WORDS: Record<string, string> = {
-  ask: "asks and waits for the answer",
-  run: "hands over a task and waits for its report",
+  ask: "asks, and waits for the answer",
+  run: "hands over a task, and waits for its report",
   request: "asks without waiting",
-  start: "starts a task without waiting",
-  wait: "waits for a request, fact or stream",
+  start: "hands over a task without waiting",
+  wait: "waits for a request, a fact or a stream",
   cancel: "calls a request off",
   handOver: "gives a request to someone else",
   say: "posts a message",
-  judge: "asks the host's judge whether a condition holds",
+  judge: "asks the host’s judge whether a condition holds",
 };
 
 export interface Panels {
@@ -23,38 +24,35 @@ export interface Panels {
   show(report: CheckReport): void;
   /** Shows that the checker itself failed on this version. */
   fail(message: string): void;
+  /** Brings the problems into view, as Restart does when the program does not type-check. */
+  revealProblems(): void;
 }
 
 export function createPanels(root: HTMLElement, onReveal: (diagnostic: CheckDiagnostic) => void): Panels {
-  const problems = section(root, "problems", "Problems");
-  const effects = section(root, "effects", "Effects");
-  const types = section(root, "types", "Types");
-
   return {
     show(report) {
-      problems.body.replaceChildren(problemList(report.diagnostics, onReveal));
-      effects.body.replaceChildren(...effectsSummary(report.effects));
-      types.body.replaceChildren(typeList(report.bindings, report.ok));
+      root.replaceChildren(
+        ...(report.diagnostics.length === 0 ? [] : [section("problems", "Problems", problemList(report.diagnostics, onReveal))]),
+        ...(report.effects === null ? [] : [section("effects", "Effects", ...effectsSummary(report.effects))]),
+        ...(report.bindings.length === 0 ? [] : [typeList(report.bindings)]),
+      );
     },
     fail(message) {
-      problems.body.replaceChildren(paragraph(`The checker failed on this program: ${message}`, "failure"));
-      effects.body.replaceChildren();
-      types.body.replaceChildren();
+      root.replaceChildren(section("problems", "Problems", el("p", { class: "failure" }, `The checker failed on this program: ${message}`)));
+    },
+    revealProblems() {
+      const problems = root.querySelector(".review-problems");
+      problems?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      problems?.querySelector("button")?.focus({ preventScroll: true });
     },
   };
 }
 
-function section(root: HTMLElement, id: string, title: string): { body: HTMLElement } {
-  const element = el("section", { class: `review-section review-${id}`, "aria-labelledby": `${id}-heading` });
-  const heading = el("h2", { id: `${id}-heading` }, title);
-  const body = el("div", { class: "review-body" });
-  element.append(heading, body);
-  root.append(element);
-  return { body };
+function section(id: string, title: string, ...body: HTMLElement[]): HTMLElement {
+  return el("section", { class: `review-section review-${id}`, "aria-labelledby": `${id}-heading` }, el("h3", { id: `${id}-heading` }, title), ...body);
 }
 
 function problemList(diagnostics: readonly CheckDiagnostic[], onReveal: (diagnostic: CheckDiagnostic) => void): HTMLElement {
-  if (diagnostics.length === 0) return paragraph("No problems. The program type-checks.", "quiet");
   const list = el("ol", { class: "problems", "aria-label": problemCount(diagnostics) });
   for (const diagnostic of diagnostics) {
     const { line, column } = diagnostic.span.start;
@@ -72,26 +70,23 @@ function problemList(diagnostics: readonly CheckDiagnostic[], onReveal: (diagnos
   return list;
 }
 
-function effectsSummary(effects: readonly EffectSummary[] | null): HTMLElement[] {
-  if (effects === null) return [paragraph("Shown once the program type-checks.", "quiet")];
-  const note = paragraph("For review: what this program may do and whom it names. Naming a participant grants nothing; the host checks each effect when it happens.", "note");
-  if (effects.length === 0) return [paragraph("This program performs no effects.", "quiet"), note];
+function effectsSummary(effects: readonly EffectSummary[]): HTMLElement[] {
+  const note = el("p", { class: "note" }, "Review information: what this program may do, and whom it names. It grants nothing; the host checks each effect when it happens.");
+  if (effects.length === 0) return [el("p", { class: "quiet" }, "This program performs no effects."), note];
   const table = el("dl", { class: "effects" });
   for (const effect of effects) {
-    const targets = el("span", { class: "effect-targets" });
-    for (const target of effect.targets) targets.append(el("code", { class: target.startsWith("@") ? "participant" : "ref" }, target));
-    table.append(
-      el("div", { class: "effect" },
-        el("dt", {}, el("code", { class: "effect-family" }, effect.family)),
-        el("dd", {}, el("span", { class: "effect-words" }, FAMILY_WORDS[effect.family] ?? ""), targets)),
-    );
+    table.append(el("div", { class: "effect" },
+      el("dt", {}, el("code", { class: "effect-family" }, effect.family)),
+      el("dd", {},
+        ...effect.targets.map((target) => el("code", { class: target.startsWith("@") ? "participant" : "ref" }, target)),
+        el("span", { class: "effect-words" }, FAMILY_WORDS[effect.family] ?? ""))));
   }
   const { participants, refs } = named(effects);
+  const all = [...participants, ...refs];
   const names = el("p", { class: "named" });
-  if (participants.length === 0 && refs.length === 0) names.append("This program names no participant.");
+  if (all.length === 0) names.append("It names no participant.");
   else {
-    names.append("This program names ");
-    const all = [...participants, ...refs];
+    names.append("It names ");
     all.forEach((name, index) => {
       if (index > 0) names.append(index === all.length - 1 ? " and " : ", ");
       names.append(el("code", { class: name.startsWith("@") ? "participant" : "ref" }, name));
@@ -101,20 +96,15 @@ function effectsSummary(effects: readonly EffectSummary[] | null): HTMLElement[]
   return [table, names, note];
 }
 
-function typeList(bindings: readonly { name: string; type: string }[], ok: boolean): HTMLElement {
-  if (bindings.length === 0) return paragraph(ok ? "The program binds no names at its top level." : "Shown once the program parses.", "quiet");
+function typeList(bindings: readonly { name: string; type: string }[]): HTMLElement {
   const list = el("dl", { class: "types" });
   for (const binding of bindings) {
     list.append(el("div", { class: "binding" }, el("dt", {}, el("code", {}, binding.name)), el("dd", {}, el("code", {}, binding.type))));
   }
-  return list;
+  return el("details", { class: "review-section review-types" }, el("summary", {}, el("h3", {}, "Types")), list);
 }
 
-function paragraph(text: string, className: string): HTMLElement {
-  return el("p", { class: className }, text);
-}
-
-/** The small glyph before a problem: a cross for an error, a triangle for a warning. */
+/** The small glyph before a problem or in the status: a cross for an error, a triangle for a warning, a tick. */
 export function icon(kind: "error" | "warning" | "ok"): SVGElement {
   const paths = {
     error: "M5 5l6 6M11 5l-6 6",

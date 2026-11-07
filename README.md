@@ -137,10 +137,14 @@ The [examples](examples) are the programs of spec §3. The
 
 ## Playground
 
-The [playground](https://norn-lang.org/norn/) checks Norn as you type, in the
-browser, with the same checker as `norn check`. Its source is in
-[`playground`](playground); it is the one part of this repository with a build
-step, which bundles it with esbuild and CodeMirror.
+The [playground](https://norn-lang.org/norn/) checks Norn as you type, with
+the same checker as `norn check`, and runs the program in the browser against
+a simulated team: you answer, decline or fail its requests, move the clock and
+fire the host's facts and streams, and watch it wait, time out, hand over and
+finish. It runs the reference runtime with an in-memory store; nothing leaves
+the page. Its source is in [`playground`](playground); it is the one part of
+this repository with a build step, which bundles it with esbuild and
+CodeMirror.
 
 ```sh
 npm run playground:dev     # serve it at http://localhost:8000, rebuilt on every change
