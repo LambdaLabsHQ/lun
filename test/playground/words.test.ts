@@ -23,3 +23,10 @@ test("values are shown as Norn source would write them", () => {
     { type: "source", kind: "stream", name: "ciFailed", args: [{ type: "string", value: "acme/api" }], labels: {} },
   ], labels: {} }), 'every(1d)->or(ciFailed("acme/api"))');
 });
+
+test("a sentence ends with a full stop, unless its last quote already ends it", async () => {
+  const { sentence } = await import("../../playground/src/story.ts");
+  const { plain } = await import("../../playground/src/words.ts");
+  assert.equal(plain(sentence(["Waiting for ", { kind: "quote", text: "Is it hot?" }])), "Waiting for “Is it hot?”");
+  assert.equal(plain(sentence(["Waiting until ", { kind: "time", text: "2026-11-07 10:00 UTC" }])), "Waiting until 2026-11-07 10:00 UTC.");
+});

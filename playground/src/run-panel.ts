@@ -8,7 +8,7 @@ import { el } from "./panels.ts";
 import { fieldInput, type FieldInput } from "./forms.ts";
 import type { Value } from "../../src/runtime/browser.ts";
 import type { AwaitedEvent, OpenRequest, Simulation, SimulationState } from "./simulation.ts";
-import { tell } from "./story.ts";
+import { sentence, tell } from "./story.ts";
 import { formatDate, formatTimeOfDay, formatWeekday, source as sourceText, type Run } from "./words.ts";
 
 export interface RunElements {
@@ -117,7 +117,7 @@ export function createRunPanel(elements: RunElements, host: Host): RunPanel {
     const parts: HTMLElement[] = [
       ...(today === lastDay ? [] : [el("p", { class: "now-day" }, today)]),
       el("time", { class: "now-time", datetime: new Date(state.now).toISOString() }, formatTimeOfDay(state.now)),
-      el("p", { class: "now-sentence" }, "Waiting ", ...runs([...state.waiting.targets, ...state.waiting.deadline]), "."),
+      el("p", { class: "now-sentence" }, ...runs(sentence(["Waiting ", ...state.waiting.targets, ...state.waiting.deadline]))),
     ];
     for (const request of state.requests) parts.push(requestCard(request));
     for (const event of state.events) parts.push(eventCard(event));
