@@ -4,7 +4,7 @@
  * included. The lexer skips comments as trivia, so they are found in the gaps
  * between its tokens. Pure: the editor turns these ranges into decorations.
  */
-import { FAMILIES } from "../../src/frontend/check/builtins.ts";
+import { builtinValues } from "../../src/frontend/check/builtins.ts";
 import { lex, type Token } from "../../src/frontend/lexer.ts";
 
 export type Style =
@@ -32,7 +32,7 @@ export interface Highlight {
 }
 
 /** The built-ins that perform an effect (docs/types.md §8): the places where a program touches the world. */
-const EFFECTS: ReadonlySet<string> = new Set(FAMILIES);
+const EFFECTS: ReadonlySet<string> = new Set(builtinValues().filter((builtin) => builtin.family !== null).map((builtin) => builtin.name));
 
 const OPERATORS: ReadonlySet<string> = new Set([
   "=>", "->", "==", "!=", "<=", ">=", "&&", "||", "++", "+.", "-.", "*.", "/.", "|", "?", "!", "<", ">", "+", "-", "*", "/", "...", "=",

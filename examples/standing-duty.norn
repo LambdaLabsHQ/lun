@@ -1,4 +1,4 @@
 // A standing duty.
 every(1d)
 ->or(ciFailed("acme/api"))
-->forEach(_ => run(@auto, "Check production health and fix the riskiest issue"))
+->forEach(_ => run(@auto, "Check production health and fix the riskiest issue")->wait)

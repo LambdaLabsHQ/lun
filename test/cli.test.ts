@@ -33,7 +33,7 @@ test("norn parse prints an outline of the tree", () => {
   assert.equal(result.stderr, "");
   const lines = result.stdout.split("\n");
   assert.equal(lines[0], "Program  1:1-5:1");
-  assert.ok(lines.includes(`    Pipe  2:1-4:81`));
+  assert.ok(lines.includes(`    Pipe  2:1-4:87`));
   assert.ok(lines.includes(`            DurationLiteral amount="1" unit="d"  2:7-2:9`));
 });
 
@@ -44,7 +44,7 @@ test("norn parse --json prints the norn-ast document on one line", () => {
   const document = JSON.parse(result.stdout);
   assert.equal(document.format, "norn-ast");
   assert.equal(document.version, 1);
-  assert.deepEqual(document.program.body.map((item: { kind: string }) => item.kind), ["TypeDecl", "Switch"]);
+  assert.deepEqual(document.program.body.map((item: { kind: string }) => item.kind), ["Switch"]);
 });
 
 test("norn parse --json writes version 2 only for a tree that needs it", () => {
@@ -79,20 +79,20 @@ test("norn check reports type errors and warnings in the parser's style, and exi
   const directory = mkdtempSync(join(tmpdir(), "norn-cli-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const file = join(directory, "probe.norn");
-  writeFileSync(file, 'type probe = Ship | Drop\nswitch ask(@alice, "Ship?", ~options=[Ship, Drop]) {\n| Done(Ship) => ()\n| Done(_) => ()\n| Done(Drop) => ()\n| TimedOut | Failed(_) => ()\n}\n');
+  writeFileSync(file, 'type probe = Ship | Drop\nswitch choose(@alice, "Ship?", [Ship, Drop])->wait {\n| Answered(Ship) => ()\n| Answered(_) => ()\n| Answered(Drop) => ()\n| NoReply | Broke(_) => ()\n}\n');
   const result = norn(["check", file]);
   assert.equal(result.status, 1);
   assert.equal(result.stdout, "");
   assert.equal(
     result.stderr,
     [
-      `error: this switch does not handle Declined(_), Cancelled or Revoked at ${file}:2:1`,
-      ` 2 | switch ask(@alice, "Ship?", ~options=[Ship, Drop]) {`,
+      `error: this switch does not handle Refused(_), Cancelled or Revoked at ${file}:2:1`,
+      ` 2 | switch choose(@alice, "Ship?", [Ship, Drop])->wait {`,
       `   | ^^^^^^`,
       "",
       `warning: this case can never match: the cases before it cover every value it matches at ${file}:5:3`,
-      ` 5 | | Done(Drop) => ()`,
-      `   |   ^^^^^^^^^^`,
+      ` 5 | | Answered(Drop) => ()`,
+      `   |   ^^^^^^^^^^^^^^`,
       "",
       "",
     ].join("\n"),
@@ -109,7 +109,7 @@ test("norn check --json prints each file's diagnostics and effects in one docume
   const directory = mkdtempSync(join(tmpdir(), "norn-cli-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const file = join(directory, "bad.norn");
-  writeFileSync(file, 'say("alice", "hi")\nswitch run(@auto, "x") {\n| Done(_) => ()\n}\n');
+  writeFileSync(file, 'say("alice", "hi")\nswitch run(@auto, "x")->wait {\n| Answered(_) => ()\n}\n');
   const result = norn(["check", "--json", "examples/decide.norn", file]);
   assert.equal(result.status, 1);
   assert.equal(result.stderr, "");
@@ -120,7 +120,7 @@ test("norn check --json prints each file's diagnostics and effects in one docume
     file: "examples/decide.norn",
     ok: true,
     diagnostics: [],
-    effects: [{ family: "ask", targets: ["@alice"] }, { family: "run", targets: ["@auto"] }],
+    effects: [{ family: "confirm", targets: ["@alice"] }, { family: "run", targets: ["@auto"] }, { family: "wait", targets: [] }],
   });
   const [addressee, missing] = document.files[1].diagnostics;
   assert.deepEqual(addressee, {
@@ -134,9 +134,9 @@ test("norn check --json prints each file's diagnostics and effects in one docume
   assert.deepEqual(missing, {
     severity: "error",
     code: "non-exhaustive",
-    message: "this switch does not handle Declined(_), Failed(_), TimedOut, Cancelled or Revoked",
+    message: "this switch does not handle Refused(_), NoReply, Broke(_), Cancelled or Revoked",
     span: { start: { line: 2, column: 1, offset: 19 }, end: { line: 2, column: 7, offset: 25 } },
-    missing: ["Declined(_)", "Failed(_)", "TimedOut", "Cancelled", "Revoked"],
+    missing: ["Refused(_)", "NoReply", "Broke(_)", "Cancelled", "Revoked"],
   });
   assert.deepEqual([document.files[1].ok, document.files[1].effects], [false, null]);
   // A syntax error has the code "syntax".
@@ -150,13 +150,13 @@ test("norn check --host checks programs against another interface, and refuses a
   const host = join(directory, "tickets.norn");
   writeFileSync(host, "type ticket\nexternal opened: (string) => event<ticket>\n");
   const program = join(directory, "watch.norn");
-  writeFileSync(program, 'let t = opened("T-1")->wait?\nsay(@alice, "opened")\n');
+  writeFileSync(program, 'let t = opened("T-1")->wait\nsay(@alice, "opened")\n');
   assert.deepEqual(norn(["check", "--host", host, program]), { status: 0, stdout: `${program}: ok\n`, stderr: "" });
   assert.equal(norn(["check", `--host=${host}`, program, host]).stdout, `${program}: ok\n${host}: ok (host interface)\n`);
   // The reference host's facts are not there.
   const other = norn(["check", "--host", host, "examples/release-chain.norn"]);
   assert.equal(other.status, 1);
-  assert.match(other.stderr, /^error: unknown name merged; did you mean merge\? at examples\/release-chain\.norn:2:10/);
+  assert.match(other.stderr, /^error: unknown name merged at examples\/release-chain\.norn:2:10/);
   // A broken interface is reported, and nothing is checked against it.
   writeFileSync(host, "type ticket\nlet x = 1\n");
   const broken = norn(["check", "--host", host, program]);

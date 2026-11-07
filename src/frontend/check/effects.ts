@@ -23,7 +23,7 @@ export interface EffectSummary {
 }
 
 /** Which positional argument of a built-in names its target. */
-const TARGET_ARGUMENT: { readonly [F in Family]?: number } = { ask: 0, run: 0, request: 0, start: 0, say: 0, handOver: 1 };
+const TARGET_ARGUMENT: { readonly [F in Family]?: number } = { ask: 0, confirm: 0, choose: 0, run: 0, say: 0, handOver: 1 };
 
 /** A parameter of a named function: its position, or its label. */
 type Parameter = { readonly index: number } | { readonly label: string };

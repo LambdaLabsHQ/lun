@@ -20,8 +20,12 @@ export type Type = TVar | TCon | TTuple | TFun | TParam;
 
 /** A finite class of §3. `equality` is kept apart, as a flag: it is the only class that combines with `handled`. */
 export type FiniteClass = "ordered" | "deadline" | "addressee" | "handled";
-/** `discardable`, "not an outcome", is the type of a value that a generic function drops (§6a). */
-export type ClassName = FiniteClass | "equality" | "discardable";
+/**
+ * `discardable`, "neither a request nor a reply", is the type of a value that
+ * a generic function drops; `ignorable`, "not a request", the type of what
+ * `ignore` takes (§6a).
+ */
+export type ClassName = FiniteClass | "equality" | "discardable" | "ignorable";
 
 export interface TVar {
   readonly tag: "var";
@@ -34,14 +38,16 @@ export interface TVar {
   /** The variable must be an equality type: one with no function inside. */
   equality: boolean;
   /**
-   * Where a value of this type is dropped, if it is: then the type must not
-   * be an outcome (§6a). Set when a generic function drops a value of a
-   * generalized type, so that each use of the function checks it.
+   * Where a value of this type is dropped, if it is: then the type must be
+   * neither a request nor a reply (§6a). Set when a generic function drops a
+   * value of a generalized type, so that each use of the function checks it.
    */
   dropped: Span | null;
+  /** The type is what `ignore` takes: it must not be a request (§6a). */
+  ignored: boolean;
 }
 
-/** A nominal type: `int`, `list<'a>`, `outcome<'a>`, `release`, `#source<#fact, pr>`. */
+/** A nominal type: `int`, `list<'a>`, `reply<'a>`, `release`, `#source<#fact, pr>`. */
 export interface TCon {
   readonly tag: "con";
   readonly name: string;
@@ -64,7 +70,7 @@ export interface TFun {
 export interface TLabel {
   readonly label: string;
   readonly type: Type;
-  /** A caller may leave the argument out: `~until: 'd=?`. */
+  /** A caller may leave the argument out: `~by: 'd=?`. */
   readonly optional: boolean;
 }
 
@@ -81,8 +87,8 @@ export const GENERIC = Number.MAX_SAFE_INTEGER;
 
 let nextId = 0;
 
-export function newVar(level: number, cls: FiniteClass | null = null, equality = false, dropped: Span | null = null): TVar {
-  return { tag: "var", id: nextId++, level, link: null, cls, equality, dropped };
+export function newVar(level: number, cls: FiniteClass | null = null, equality = false, dropped: Span | null = null, ignored = false): TVar {
+  return { tag: "var", id: nextId++, level, link: null, cls, equality, dropped, ignored };
 }
 
 export function con(name: string, ...args: Type[]): TCon {
@@ -101,13 +107,19 @@ export function fun(params: Type[], labels: TLabel[], result: Type): TFun {
  * The kinds of the internal source type: facts are events, occurrences are
  * streams, and requests. Its name and theirs start with `#`, which no type
  * name in a program can, so a program may declare its own `source`.
+ *
+ * `#source<'kind, 'w>` holds what waiting on it gives: the value of an
+ * `event<'a>` or a `stream<'a>`, and the `reply<'a>` of a `request<'a>`.
  */
 export const FACT = con("#fact");
 export const OCCURRENCE = con("#occurrence");
 export const REQUEST = con("#request");
 export const SOURCE = "#source";
 
-export const source = (kind: Type, element: Type): TCon => con(SOURCE, kind, element);
+export const source = (kind: Type, waited: Type): TCon => con(SOURCE, kind, waited);
+
+/** `request<'a>`: a source of the request kind, whose wait gives `reply<'a>`. */
+export const requestOf = (answer: Type): TCon => source(REQUEST, con("reply", answer));
 
 /** Follows links to what a variable stands for, shortening the chain on the way. */
 export function resolve(type: Type): Type {
@@ -160,12 +172,12 @@ export class UnifyError extends Error {
   }
 }
 
-/** The members of each finite class that are base types. `handled` also holds every `outcome<_>`. */
+/** The members of each finite class that are base types. `handled` also holds every `reply<_>`. */
 const MEMBERS: { readonly [C in FiniteClass]: readonly string[] } = {
   ordered: ["int", "float", "string", "time", "duration"],
   deadline: ["time", "duration"],
   addressee: ["participant", "ref"],
-  handled: ["unit", "outcome"],
+  handled: ["unit", "reply"],
 };
 
 /** Makes two types equal, or throws a UnifyError. Variables bound before the clash stay bound. */
@@ -220,6 +232,7 @@ function bind(variable: TVar, type: Type, facts: TypeFacts): void {
     type.cls = meet(variable.cls, type.cls);
     type.equality ||= variable.equality;
     type.dropped ??= variable.dropped;
+    type.ignored ||= variable.ignored;
     type.level = Math.min(type.level, variable.level);
     variable.link = type;
     return;
@@ -228,8 +241,11 @@ function bind(variable: TVar, type: Type, facts: TypeFacts): void {
   if (variable.cls !== null && !inFiniteClass(variable.cls, type)) {
     throw new UnifyError({ kind: "class", cls: variable.cls, type, inner: type });
   }
-  if (variable.dropped !== null && type.tag === "con" && type.name === "outcome") {
+  if (variable.dropped !== null && (isReply(type) || isRequest(type))) {
     throw new UnifyError({ kind: "class", cls: "discardable", type, inner: type, dropped: variable.dropped });
+  }
+  if (variable.ignored && isRequest(type)) {
+    throw new UnifyError({ kind: "class", cls: "ignorable", type, inner: type });
   }
   if (variable.equality) requireEquality(type, facts);
   variable.link = type;
@@ -247,7 +263,7 @@ function meet(first: FiniteClass | null, second: FiniteClass | null): FiniteClas
 export function inFiniteClass(cls: FiniteClass, type: Type): boolean {
   const resolved = resolve(type);
   if (resolved.tag !== "con") return false;
-  if (cls === "handled") return resolved.name === "outcome" || resolved.name === "unit";
+  if (cls === "handled") return resolved.name === "reply" || resolved.name === "unit";
   return resolved.args.length === 0 && MEMBERS[cls].includes(resolved.name);
 }
 
@@ -276,8 +292,11 @@ export function requireEquality(type: Type, facts: TypeFacts): void {
       case "con": {
         if (resolved.name === SOURCE) {
           const kind = resolve(resolved.args[0]!);
-          if (kind.tag === "var") unify(kind, REQUEST, facts);
-          else if (kind !== REQUEST && !(kind.tag === "con" && kind.name === REQUEST.name)) {
+          if (kind.tag === "var") {
+            // A source of unknown kind becomes a request when compared, so waiting on it gives a reply.
+            unify(kind, REQUEST, facts);
+            unify(resolved.args[1]!, con("reply", newVar(GENERIC - 1)), facts);
+          } else if (kind !== REQUEST && !(kind.tag === "con" && kind.name === REQUEST.name)) {
             throw new UnifyError({ kind: "class", cls: "equality", type, inner: resolved });
           }
           break;
@@ -365,7 +384,7 @@ export function instantiate(type: Type, level: number): Type {
     if (leaf.tag !== "var" || leaf.level !== GENERIC) return leaf;
     let copy = copies.get(leaf);
     if (copy === undefined) {
-      copy = newVar(level, leaf.cls, leaf.equality, leaf.dropped);
+      copy = newVar(level, leaf.cls, leaf.equality, leaf.dropped, leaf.ignored);
       copies.set(leaf, copy);
     }
     return copy;
@@ -441,9 +460,21 @@ function assemble(type: Type, parts: Type[]): Type {
   }
 }
 
-/** Whether a type is `outcome<_>`. */
-export function isOutcome(type: Type): boolean {
-  return headName(type) === "outcome";
+/** Whether a type is `reply<_>`. */
+export function isReply(type: Type): boolean {
+  return headName(type) === "reply";
+}
+
+/** Whether a type is `request<_>`: a source whose kind is known to be a request. */
+export function isRequest(type: Type): boolean {
+  const resolved = resolve(type);
+  return resolved.tag === "con" && resolved.name === SOURCE && headName(resolved.args[0]!) === REQUEST.name;
+}
+
+/** What a request answers: the `'a` of `request<'a>`, whose wait gives `reply<'a>`; null when that is not known to be a reply. */
+function answerOf(source: TCon): Type | null {
+  const waited = resolve(source.args[1]!);
+  return waited.tag === "con" && waited.name === "reply" ? resolve(waited.args[0]!) : null;
 }
 
 // Printing ----------------------------------------------------------------------
@@ -473,8 +504,8 @@ export class Namer {
 }
 
 /**
- * A type as a message shows it: `outcome<report>`, `(participant, string,
- * ~until: 'a=?) => outcome<string>`. A source shows as `event<'a>`,
+ * A type as a message shows it: `reply<report>`, `(participant, string,
+ * ~by: 'a=?) => request<string>`. A source shows as `event<'a>`,
  * `stream<'a>` or `request<'a>`, and as `(event|stream|request)<'a>` while its
  * kind is unknown.
  *
@@ -513,8 +544,12 @@ export function printType(type: Type, namer: Namer = new Namer()): string {
 /** The parts of a type that its text shows, resolved, in the order it shows them. A source shows its kind by name only. */
 function printedChildren(type: Type): Type[] {
   switch (type.tag) {
-    case "con":
-      return (type.name === SOURCE ? type.args.slice(1) : type.args).map(resolve);
+    case "con": {
+      if (type.name !== SOURCE) return type.args.map(resolve);
+      // A request shows what it answers, request<'a>, not what waiting on it gives, reply<'a>.
+      const answer = headName(type.args[0]!) === REQUEST.name ? answerOf(type) : null;
+      return [answer ?? resolve(type.args[1]!)];
+    }
     case "tuple":
       return type.elements.map(resolve);
     case "fun":
@@ -624,6 +659,7 @@ export function printScheme(type: Type): string {
       ...(variable.cls === null ? [] : [variable.cls]),
       ...(variable.equality && (variable.cls === null || variable.cls === "handled") ? ["equality"] : []),
       ...(variable.dropped === null ? [] : ["discardable"]),
+      ...(variable.ignored && variable.dropped === null ? ["ignorable"] : []),
     ];
     return classes.length === 0 ? [] : [`${namer.name(variable)}: ${classes.join(", ")}`];
   });
