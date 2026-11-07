@@ -1,5 +1,9 @@
 # Reference machine and simulated host
 
+For the session-local memory adapter and `open Std`, see the
+[browser runtime](browser-runtime.md). SQLite remains the Node persistence
+adapter; importing the browser entry does not load it.
+
 The reference machine executes the versioned AST in `src/frontend/ast.ts`.
 `compile` pins its JSON document by SHA-256 and assigns deterministic node IDs.
 The canonical AST is stored immutably by its hash. `Runtime.restore` reloads

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["es2024", "dom"],
+    "types": [],
+    "module": "esnext",
+    "moduleResolution": "bundler"
+  },
+  "include": ["src/runtime/browser.ts"]
+}

@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
 import { NODE_FIELDS, type AstNode, type Program } from "../frontend/ast.ts";
 import { astToJson, astFromJson } from "../frontend/json.ts";
+import { sha256 } from "./sha256.ts";
+import { linkStd, requireLinked } from "./std.ts";
 
 /** Pinned code is kept separately from a serializable machine checkpoint. */
 export interface Code {
@@ -10,13 +11,14 @@ export interface Code {
   nodes: Record<string, AstNode>;
   nodeId(node: AstNode): string;
 }
-export function compile(program: Program): Code {
-  return compileAstJson(astToJson(program));
+export function compile(program: Program, options: {std?: Program} = {}): Code {
+  return compileAstJson(astToJson(linkStd(program, options.std)));
 }
 
 /** Load an existing definition without recoding the bytes that name it. */
 export function compileAstJson(ast: string): Code {
   const pinned = astFromJson(ast);
+  requireLinked(pinned);
   const objects: unknown[] = [pinned];
   while (objects.length) {
     const value = objects.pop();
@@ -48,7 +50,7 @@ export function compileAstJson(ast: string): Code {
   Object.freeze(nodes);
   return Object.freeze({
     ast,
-    id: `sha256:${createHash("sha256").update(ast).digest("hex")}`,
+    id: `sha256:${sha256(ast)}`,
     root: ids.get(pinned)!, nodes,
     nodeId(node: AstNode) { const id = ids.get(node); if (!id) throw new Error("Node does not belong to pinned code"); return id; },
   });
