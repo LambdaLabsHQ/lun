@@ -164,6 +164,23 @@ for (const [name, open] of Object.entries(stores)) {
     } finally { await store.close(); }
   });
 
+  test(`${name}: request authority lost before or after wait registration gives the same Revoked reply`, async () => {
+    for (const registered of [false, true]) {
+      const clock = new VirtualClock(), store = open(clock);
+      let permitted = true;
+      const policy = {async authorize() { return permitted; }};
+      const runtime = new Runtime(source('let q = ask(@alice, "Question")\nswitch q->wait { | Revoked => "handled" | _ => "other" }'), store, policy);
+      try {
+        await runtime.create("p"); await runtime.step("p");
+        if (registered) await runtime.step("p");
+        permitted = false;
+        await runtime.step("p"); await runtime.runReady();
+        assert.deepEqual((await question(store)).outcome, {tag: "Revoked"});
+        assert.deepEqual(await control(store), {kind: "done", value: text("handled")});
+      } finally { await store.close(); }
+    }
+  });
+
   test(`${name}: an older machine ABI is rejected with both versions and its snapshot unchanged`, async () => {
     const clock = new VirtualClock(), store = open(clock), host = new SimulatedHost(store, clock), code = source('1');
     try {

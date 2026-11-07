@@ -150,8 +150,15 @@ export class Runtime {
   }
   private async effect(before: Checkpoint, machine: Machine, effect: Effect, now: number): Promise<CheckpointChange> {
     if (!await this.policy.authorize(before.executionId, effect)) {
-      machine.control = { kind: "failed", outcome: variant("Revoked") };
-      return this.checkpoint(machine, now);
+      const source = effect.args[0];
+      if (["wait", "waitUntil"].includes(effect.name) && source?.type === "request") {
+        const current = await this.store.request(source.id);
+        if (!current || current.executionId !== before.executionId) throw new ProgramError("Request is outside this execution's scope");
+        if (current.outcome === null) await this.store.settleRequest(current.id, current.epoch, current.holder, { tag: "Revoked" });
+      } else {
+        machine.control = { kind: "failed", outcome: variant("Revoked") };
+        return this.checkpoint(machine, now);
+      }
     }
     const { name, args, labels } = effect;
     const declaredLabels: Record<string, string[]> = { ask: ["by"], confirm: ["by"], choose: ["by"], run: ["context", "by"],
