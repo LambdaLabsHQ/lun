@@ -105,6 +105,7 @@ their work together borrows its name.
 - [Types and the type checker](docs/types.md)
 - [Syntax tree (AST) and syntax decisions](docs/ast.md)
 - [Durable runtime research](docs/research/runtime.md)
+- [Browser runtime and pinned Std imports](docs/browser-runtime.md)
 
 ## Building
 
