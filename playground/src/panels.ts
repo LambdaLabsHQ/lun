@@ -32,7 +32,6 @@ export function createPanels(root: HTMLElement, onReveal: (diagnostic: CheckDiag
 
   return {
     show(report) {
-      problems.heading.textContent = "Problems";
       problems.body.replaceChildren(problemList(report.diagnostics, onReveal));
       effects.body.replaceChildren(...effectsSummary(report.effects));
       types.body.replaceChildren(typeList(report.bindings, report.ok));
@@ -45,13 +44,13 @@ export function createPanels(root: HTMLElement, onReveal: (diagnostic: CheckDiag
   };
 }
 
-function section(root: HTMLElement, id: string, title: string): { heading: HTMLElement; body: HTMLElement } {
+function section(root: HTMLElement, id: string, title: string): { body: HTMLElement } {
   const element = el("section", { class: `review-section review-${id}`, "aria-labelledby": `${id}-heading` });
   const heading = el("h2", { id: `${id}-heading` }, title);
   const body = el("div", { class: "review-body" });
   element.append(heading, body);
   root.append(element);
-  return { heading, body };
+  return { body };
 }
 
 function problemList(diagnostics: readonly CheckDiagnostic[], onReveal: (diagnostic: CheckDiagnostic) => void): HTMLElement {
@@ -89,9 +88,9 @@ function effectsSummary(effects: readonly EffectSummary[] | null): HTMLElement[]
   }
   const { participants, refs } = named(effects);
   const names = el("p", { class: "named" });
-  if (participants.length === 0 && refs.length === 0) names.append("It names no participant.");
+  if (participants.length === 0 && refs.length === 0) names.append("This program names no participant.");
   else {
-    names.append("It names ");
+    names.append("This program names ");
     const all = [...participants, ...refs];
     all.forEach((name, index) => {
       if (index > 0) names.append(index === all.length - 1 ? " and " : ", ");

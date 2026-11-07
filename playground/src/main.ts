@@ -4,7 +4,7 @@
  */
 import exampleFiles from "norn:examples";
 import { problemCount, type CheckReport } from "./check.ts";
-import { createEditor, replaceDoc, reveal, setWrapping, showDiagnostics } from "./editor.ts";
+import { createEditor, replaceDoc, reveal, showDiagnostics } from "./editor.ts";
 import { describeExamples, type Example } from "./examples.ts";
 import { createPanels, el, icon } from "./panels.ts";
 import type { CheckReply, CheckRequest } from "./protocol.ts";
@@ -28,9 +28,6 @@ const initial = await programFrom(await readFragment(location.hash));
 const view = createEditor({ parent: byId("editor"), doc: initial, onChange: changed });
 nameProgram();
 
-const narrow = matchMedia("(max-width: 720px)");
-setWrapping(view, narrow.matches);
-narrow.addEventListener("change", () => setWrapping(view, narrow.matches));
 
 /** The program a fragment names; an example, and a notice, when it names none that can be read. */
 async function programFrom(fragment: Fragment): Promise<string> {
@@ -90,9 +87,7 @@ addEventListener("popstate", () => void followFragment());
 
 /** Loads the program a changed fragment names, as after Back or a pasted link. */
 async function followFragment(): Promise<void> {
-  const fragment = await readFragment(location.hash);
-  if (fragment.kind === "none") return;
-  const program = await programFrom(fragment);
+  const program = await programFrom(await readFragment(location.hash));
   if (program !== view.state.doc.toString()) replaceDoc(view, program);
 }
 

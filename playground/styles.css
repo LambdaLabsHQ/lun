@@ -375,12 +375,6 @@ button {
   color: var(--ink);
 }
 
-.example[aria-current="true"] .example-file::after {
-  content: "  open";
-  font-family: var(--sans);
-  color: var(--ink-3);
-}
-
 .example-summary {
   color: var(--ink-3);
 }
@@ -417,7 +411,8 @@ button {
 }
 
 .editor .cm-line {
-  padding: 0 20px 0 6px;
+  padding: 0 20px 0 calc(6px + var(--hang, 0ch));
+  text-indent: calc(-1 * var(--hang, 0ch));
 }
 
 .editor .cm-gutters {
@@ -438,6 +433,24 @@ button {
 .editor .cm-activeLineGutter {
   background: transparent;
   color: var(--ink-2);
+}
+
+.editor .cm-editor:not(.cm-focused) .cm-activeLine {
+  background: transparent;
+}
+
+.editor .cm-editor:not(.cm-focused) .cm-activeLineGutter {
+  color: inherit;
+}
+
+.editor .cm-gutterElement.cm-problemLine-error {
+  color: var(--madder);
+  font-weight: 600;
+}
+
+.editor .cm-gutterElement.cm-problemLine-warning {
+  color: var(--weld);
+  font-weight: 600;
 }
 
 .editor .cm-cursor {
@@ -735,13 +748,14 @@ button {
     gap: 32px;
   }
 
+  /* The editor grows with the program, and the page is the only thing that scrolls. */
   .editor {
     flex: none;
-    height: max(340px, 62svh);
   }
 
   .editor .cm-editor {
-    /* 16px keeps a phone from zooming in when the editor takes focus. */
+    height: auto;
+    min-height: 240px;
     font-size: 15px;
   }
 
@@ -750,6 +764,7 @@ button {
   }
 }
 
+/* 16px keeps a phone from zooming in when the editor takes focus. */
 @media (pointer: coarse) {
   .editor .cm-editor {
     font-size: 16px;

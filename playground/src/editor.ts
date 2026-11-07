@@ -5,11 +5,11 @@
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab, toggleComment } from "@codemirror/commands";
 import { bracketMatching, indentService, indentUnit, type IndentContext } from "@codemirror/language";
-import { lintGutter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
-import { Compartment, EditorState, RangeSetBuilder, type Extension, type Text } from "@codemirror/state";
+import { setDiagnostics, type Diagnostic } from "@codemirror/lint";
+import { EditorState, RangeSet, RangeSetBuilder, StateEffect, StateField, type Extension, type Text } from "@codemirror/state";
 import {
-  Decoration, EditorView, ViewPlugin, drawSelection, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars,
-  keymap, lineNumbers, type DecorationSet, type ViewUpdate,
+  Decoration, EditorView, GutterMarker, ViewPlugin, drawSelection, gutterLineClass, highlightActiveLine, highlightActiveLineGutter,
+  highlightSpecialChars, keymap, lineNumbers, type DecorationSet, type ViewUpdate,
 } from "@codemirror/view";
 import type { CheckDiagnostic } from "../../src/frontend/check/index.ts";
 import { highlights, type Highlight, type Style } from "./highlight.ts";
@@ -46,15 +46,33 @@ export function showDiagnostics(view: EditorView, diagnostics: readonly CheckDia
       source: diagnostic.code,
     };
   });
-  view.dispatch(setDiagnostics(view.state, marks));
+  const severities = new Map<number, "error" | "warning">();
+  for (const mark of marks) {
+    const line = view.state.doc.lineAt(mark.from).from;
+    if (severities.get(line) !== "error") severities.set(line, mark.severity as "error" | "warning");
+  }
+  const lines = [...severities].sort(([a], [b]) => a - b).map(([from, severity]) => problemLine[severity].range(from));
+  view.dispatch(setDiagnostics(view.state, marks), { effects: setProblemLines.of(RangeSet.of(lines)) });
 }
 
-const wrapping = new Compartment();
-
-/** Wraps long lines, as on a narrow screen, or lets them run on. */
-export function setWrapping(view: EditorView, wrap: boolean): void {
-  view.dispatch({ effects: wrapping.reconfigure(wrap ? EditorView.lineWrapping : []) });
+/** The line numbers of lines with a problem take its colour, in place of a gutter of markers. */
+class ProblemLine extends GutterMarker {
+  constructor(severity: "error" | "warning") {
+    super();
+    this.elementClass = `cm-problemLine-${severity}`;
+  }
 }
+const problemLine = { error: new ProblemLine("error"), warning: new ProblemLine("warning") };
+const setProblemLines = StateEffect.define<RangeSet<GutterMarker>>();
+const problemLines = StateField.define<RangeSet<GutterMarker>>({
+  create: () => RangeSet.empty,
+  update(lines, transaction) {
+    let next = lines.map(transaction.changes);
+    for (const effect of transaction.effects) if (effect.is(setProblemLines)) next = effect.value;
+    return next;
+  },
+  provide: (field) => gutterLineClass.from(field),
+});
 
 /** Selects a range and brings it into view, as a click on a diagnostic does. */
 export function reveal(view: EditorView, from: number, to: number): void {
@@ -79,9 +97,10 @@ function extensions(onChange: (view: EditorView) => void): Extension[] {
     bracketMatching(),
     closeBrackets(),
     highlightActiveLine(),
-    lintGutter(),
+    problemLines,
     highlighter,
-    wrapping.of([]),
+    EditorView.lineWrapping,
+    hangingIndent,
     keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, { key: "Mod-/", run: toggleComment }, indentWithTab]),
     EditorView.contentAttributes.of({ "aria-label": "Norn program", spellcheck: "false", autocorrect: "off", autocapitalize: "off" }),
     EditorView.updateListener.of((update: ViewUpdate) => {
@@ -132,6 +151,47 @@ const highlighter = ViewPlugin.fromClass(
         for (let index = low; index < this.ranges.length && this.ranges[index]!.from < to; index += 1) {
           const range = this.ranges[index]!;
           builder.add(range.from, range.to, mark(range.style));
+        }
+      }
+      return builder.finish();
+    }
+  },
+  { decorations: (plugin) => plugin.decorations },
+);
+
+// Wrapping -------------------------------------------------------------------
+
+const indents = new Map<number, Decoration>();
+
+/**
+ * A long line wraps, and its continuation starts two columns in from where
+ * the line's own text starts, so wrapping never looks like a new line.
+ */
+const hangingIndent = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+
+    constructor(view: EditorView) {
+      this.decorations = this.build(view);
+    }
+
+    update(update: ViewUpdate): void {
+      if (update.docChanged || update.viewportChanged) this.decorations = this.build(update.view);
+    }
+
+    private build(view: EditorView): DecorationSet {
+      const builder = new RangeSetBuilder<Decoration>();
+      for (const { from, to } of view.visibleRanges) {
+        for (let pos = from; pos <= to;) {
+          const line = view.state.doc.lineAt(pos);
+          const columns = /^[ \t]*/.exec(line.text)![0].replace(/\t/g, "  ").length + 2;
+          let decoration = indents.get(columns);
+          if (decoration === undefined) {
+            decoration = Decoration.line({ attributes: { style: `--hang: ${columns}ch` } });
+            indents.set(columns, decoration);
+          }
+          builder.add(line.from, line.from, decoration);
+          pos = line.to + 1;
         }
       }
       return builder.finish();
