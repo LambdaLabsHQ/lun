@@ -1,8 +1,8 @@
 import { VirtualClock } from "./clock.ts";
 import type { Effect } from "./machine.ts";
 import type { DurableStore, Json, StoredRequest } from "./persistence.ts";
-import { eventKey, requestOutcome, type Policy, Runtime } from "./runtime.ts";
-import { equal, text, variant, type Value } from "./value.ts";
+import { eventKey, ProgramError, requestOutcome, type Policy, Runtime } from "./runtime.ts";
+import { equal, variant, type Value } from "./value.ts";
 
 /** Local, deterministic host. It never starts an agent or calls an external service. */
 export class SimulatedHost implements Policy {
@@ -17,19 +17,32 @@ export class SimulatedHost implements Policy {
     this.clock.advanceTo(at); await this.store.scanReady();
   }
   async reply(request: StoredRequest, answer: Value): Promise<boolean> {
-    let response = answer;
-    const effect = request.arguments as unknown as Effect;
-    if (response.type === "variant" && response.name === "Done") {
-      const answered = response.args[0], arity = response.args.length;
-      const allowed = effect.labels.options;
-      if (allowed && (allowed.type !== "list" || arity !== 1 || !allowed.values.some(v => equal(v, answered)))) {
-        response = variant("Declined", text("Response did not match a declared option"));
-      }
-      if (effect.name === "judge" && answered?.type !== "bool") response = variant("Failed", text("Judge response must be boolean"));
-      if (effect.name === "ask" && !allowed && answered?.type !== "string") response = variant("Declined", text("Answer must be a string"));
+    const current = await this.store.request(request.id);
+    if (!current) return false;
+    const effect = current.arguments as unknown as Effect;
+    const response = this.permitted ? answer : variant("Revoked");
+    let result;
+    try { result = requestOutcome(response); }
+    catch (error) {
+      if (!(error instanceof ProgramError)) throw error;
+      await this.store.rejectAnswer(request.id, request.epoch, request.holder, answer as unknown as Json, error.message);
+      return false;
     }
-    if (!this.permitted) response = variant("Revoked");
-    return this.store.settleRequest(request.id, request.epoch, request.holder, requestOutcome(response));
+    let invalid: string | null = null;
+    if (result.tag === "Answered") {
+      const answered = result.value as unknown as Value;
+      const allowed = effect.name === "choose" ? effect.args[2] : null;
+      if (effect.name === "choose" && (allowed?.type !== "list" || !allowed.values.some(v => equal(v, answered)))) invalid = "Answer did not match a declared option";
+      if (effect.name === "confirm" && (answered.type !== "variant" || !["Yes", "No"].includes(answered.name) || answered.args.length)) invalid = "Answer must be Yes or No";
+      if (effect.name === "judge" && answered.type !== "bool") invalid = "Judge answer must be boolean";
+      if (effect.name === "ask" && answered.type !== "string") invalid = "Answer must be a string";
+      if (effect.name === "run" && (answered.type !== "record" || answered.fields.text?.type !== "string")) invalid = "Reference report must be a record with text";
+    }
+    if (invalid !== null) {
+      await this.store.rejectAnswer(request.id, request.epoch, request.holder, answer as unknown as Json, invalid);
+      return false;
+    }
+    return this.store.settleRequest(request.id, request.epoch, request.holder, result);
   }
   async emit(id: string, source: Value, value: Value, originExecutionId?: string): Promise<boolean> {
     if (source.type !== "source" || ["merge", "or", "never", "after", "every", "map", "filter"].includes(source.name)) throw new Error("Emit a concrete external fact or stream occurrence");

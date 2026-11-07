@@ -33,13 +33,13 @@ const fact = (name: string, args: Value[], labels: Record<string, Value> = {}): 
 test("decide.norn executes its explicit timeout default with a scripted participant", async () => {
   const { store, host, runtime } = await example("decide");
   try {
-    const question = await offered(store, "ask");
+    const question = await offered(store, "confirm");
     await host.advanceTo(Date.parse("2026-11-07T12:00Z")); await host.pump(runtime);
-    assert.deepEqual((await store.request(question.id))!.outcome, { tag: "Cancelled" });
+    assert.deepEqual((await store.request(question.id))!.outcome, { tag: "NoReply" });
     const work = await offered(store, "run");
     const task = (work.arguments as { args: { value: string }[] }).args[1].value;
     assert.match(task, /at most US\$0\.10/);
-    await host.reply(work, variant("Done", text("simulated report"))); await host.pump(runtime);
+    await host.reply(work, variant("Answered", {type: "record", fields: {text: text("simulated report")}})); await host.pump(runtime);
     assert.equal((await store.load("example"))!.status, "completed");
   } finally { await store.close(); }
 });
@@ -47,12 +47,12 @@ test("decide.norn executes its explicit timeout default with a scripted particip
 test("follow-up.norn times out one wait and transfers the same request to a person", async () => {
   const { store, host, runtime } = await example("follow-up");
   try {
-    const first = await offered(store, "request");
+    const first = await offered(store, "ask");
     await host.advanceTo(3_600_000); await host.pump(runtime);
-    const moved = await offered(store, "request");
+    const moved = await offered(store, "ask");
     assert.equal(moved.id, first.id); assert.equal(moved.holder, "@alice"); assert.equal(moved.epoch, 1);
-    assert.equal(await host.reply(first, variant("Done", text("old reply"))), false);
-    await host.reply(moved, variant("Done", text("answer"))); await host.pump(runtime);
+    assert.equal(await host.reply(first, variant("Answered", text("old reply"))), false);
+    await host.reply(moved, variant("Answered", text("answer"))); await host.pump(runtime);
     assert.equal((await store.load("example"))!.status, "completed");
   } finally { await store.close(); }
 });
@@ -66,7 +66,7 @@ test("release-chain.norn waits through release and machine facts before requesti
     assert.equal((await store.effects("example")).length, 0);
     await host.emit("machine", fact("machineUpdated", [], { machine: text("win-builder"), atLeast: text("v1") }), text("ready"));
     await host.pump(runtime);
-    await host.reply(await offered(store, "run"), variant("Done", text("verified"))); await host.pump(runtime);
+    await host.reply(await offered(store, "run"), variant("Answered", {type: "record", fields: {text: text("verified")}})); await host.pump(runtime);
     assert.equal((await store.load("example"))!.status, "completed");
   } finally { await store.close(); }
 });
@@ -75,8 +75,8 @@ test("push.norn recursively continues on a PR event and terminates after a posit
   const { store, host, runtime } = await example("push");
   try {
     for (const done of [false, true]) {
-      await host.reply(await offered(store, "run"), variant("Done", text("report"))); await host.pump(runtime);
-      await host.reply(await offered(store, "judge"), variant("Done", { type: "bool", value: done })); await host.pump(runtime);
+      await host.reply(await offered(store, "run"), variant("Answered", {type: "record", fields: {text: text("report")}})); await host.pump(runtime);
+      await host.reply(await offered(store, "judge"), variant("Answered", { type: "bool", value: done })); await host.pump(runtime);
       if (!done) {
         await host.emit("activity", { type: "source", kind: "stream", name: "prActivity", args: [text("acme/api#1439")], labels: {} }, text("new activity"));
         await host.pump(runtime);

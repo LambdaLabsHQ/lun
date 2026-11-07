@@ -16,7 +16,7 @@ test("the browser entry runs Std and restores a request without Node imports or 
     await host.advanceTo(3600000); await host.pump(runtime);
     runtime = await Runtime.restore("browser", store, host);
     const offer = (await store.effects("browser")).find(e => e.operation === "request.offer");
-    await host.reply(await store.request(offer.arguments.requestId), variant("Done", text("yes")));
+    await host.reply(await store.request(offer.arguments.requestId), variant("Answered", text("yes")));
     await host.pump(runtime);
     export const result = JSON.stringify({status: (await store.load("browser")).status, process: typeof process, Buffer: typeof Buffer, require: typeof require});
   `;

@@ -15,12 +15,12 @@ function source(contents: string) {
 }
 
 test("status is None while open and Some for each terminal request outcome", async () => {
-  for (const answer of [variant("Done", text("answer")), variant("Declined", text("no")), variant("Failed", text("fault")), variant("Cancelled"), variant("Revoked")]) {
+  for (const answer of [variant("Answered", text("answer")), variant("Refused", text("no")), variant("Broke", text("fault")), variant("Cancelled"), variant("Revoked")]) {
     const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
     const runtime = new Runtime(source(`
-      let q = request(@alice, "Question?")
+      let q = ask(@alice, "Question?")
       let before = status(q)
-      after(1h)->wait?
+      after(1h)->wait
       (before, status(q))
     `), store, host);
     try {
@@ -39,8 +39,8 @@ test("status is None while open and Some for each terminal request outcome", asy
 test("a timed-out explicit wait still has status None until the request is cancelled", async () => {
   const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
   const runtime = new Runtime(source(`
-    let q = request(@alice, "Question?")
-    let waited = q->wait(~until=1h)
+    let q = ask(@alice, "Question?")
+    let waited = q->waitUntil(1h)
     let pending = status(q)
     cancel(q)
     (waited, pending, status(q))
@@ -49,7 +49,7 @@ test("a timed-out explicit wait still has status None until the request is cance
     await runtime.create("p"); await host.pump(runtime);
     await host.advanceTo(3_600_000); await host.pump(runtime);
     assert.deepEqual(((await store.load("p"))!.snapshot as { control: unknown }).control, {
-      kind: "done", value: { type: "tuple", values: [variant("TimedOut"), variant("None"), variant("Some", variant("Cancelled"))] },
+      kind: "done", value: { type: "tuple", values: [variant("None"), variant("None"), variant("Some", variant("Cancelled"))] },
     });
   } finally { await store.close(); }
 });
