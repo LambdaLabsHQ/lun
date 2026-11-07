@@ -30,10 +30,10 @@ test("nested patterns: each missing value, all of them, in the order of the cons
 });
 
 test("or-patterns cover each of their alternatives", () => {
-  const source = `type probe = Ship | Skip
-switch ask(@alice, "Ship?", ~options=[Ship, Skip]) {
+  const source = `type probe = Ship | Drop
+switch ask(@alice, "Ship?", ~options=[Ship, Drop]) {
 | Done(Ship) | TimedOut => 1
-| Done(Skip) => 2
+| Done(Drop) => 2
 | Declined(_) | Failed(_) => 3
 }`;
   assert.deepEqual(missing(source), ["Cancelled", "Revoked"]);

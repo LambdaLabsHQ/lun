@@ -557,7 +557,7 @@ export interface LabelledType {
   span: Span;
 }
 
-/** `Ship | Skip | Later(duration)` */
+/** `Ship | Drop | Later(duration)` */
 export interface VariantType {
   kind: "VariantType";
   constructors: ConstructorDecl[];

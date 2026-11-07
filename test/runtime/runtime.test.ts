@@ -37,7 +37,7 @@ function arm(name: string, body: Expression, bound?: string) {
 
 test("decide takes a declared default only on timeout; an unknown answer never consents", async () => {
   const p = program(n("Switch", {
-    scrutinee: invoke("ask", [person("alice"), str("Ship?"), labelled("options", n("ListLiteral", { elements: [constructor("Ship"), constructor("Skip")], rest: null })), labelled("until", hour())]),
+    scrutinee: invoke("ask", [person("alice"), str("Ship?"), labelled("options", n("ListLiteral", { elements: [constructor("Ship"), constructor("Drop")], rest: null })), labelled("until", hour())]),
     cases: [n("Case", { pattern: n("OrPattern", { alternatives: [n("ConstructorPattern", { name: "Done", args: [n("ConstructorPattern", { name: "Ship", args: [] })] }), n("ConstructorPattern", { name: "TimedOut", args: [] })] }), guard: null, body: call("run", person("codex"), str("ship within budget")) }),
       arm("Done", call("say", person("alice"), str("skipped")), "skip"),
       n("Case", { pattern: variable("other"), guard: null, body: call("fail", id("other")) })],

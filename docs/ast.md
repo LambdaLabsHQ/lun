@@ -226,7 +226,7 @@ cleanly.
 | Kind | Fields | Source |
 |---|---|---|
 | `Program` | `body: TopLevelItem[]` | a whole file |
-| `TypeDecl` | `name: string`, `params: TypeVar[]`, `definition: VariantType \| RecordType \| TypeExpression \| null` | `type probe = Ship \| Skip`, `type pr` |
+| `TypeDecl` | `name: string`, `params: TypeVar[]`, `definition: VariantType \| RecordType \| TypeExpression \| null` | `type probe = Ship \| Drop`, `type pr` |
 | `External` | `name: string`, `type: TypeExpression` | `external merged: (string) => event<pr>` |
 | `Open` | `module: "Std"` | `open Std` |
 
@@ -272,7 +272,7 @@ All of its bindings are in scope in all of its values.
 | `Identifier` | `name: string` | `pr` |
 | `Constructor` | `name: string`, `args: Expression[]` | `Ship`, `Done(x)` |
 | `TupleLiteral` | `elements: Expression[]` | `(a, b)` |
-| `ListLiteral` | `elements: Expression[]`, `rest: Expression \| null` | `[Ship, Skip]`, `[x, ...rest]` |
+| `ListLiteral` | `elements: Expression[]`, `rest: Expression \| null` | `[Ship, Drop]`, `[x, ...rest]` |
 | `RecordLiteral` | `spread: Expression \| null`, `fields: RecordField[]` | `{name: "x", count}`, `{...base, count: 2}` |
 | `RecordField` | `name: string`, `value: Expression` | `count: 2` |
 | `FieldAccess` | `record: Expression`, `field: string` | `release.version` |
@@ -372,7 +372,7 @@ annotations (§4).
 | `TupleType` | `elements: TypeExpression[]` | `(int, string)` |
 | `FunctionType` | `params: ParameterType[]`, `result: TypeExpression` | `(string, ~containing: pr) => event<release>` |
 | `LabelledType` | `label: string`, `type: TypeExpression`, `optional: boolean` | `~containing: pr`, `~until: duration=?` |
-| `VariantType` | `constructors: ConstructorDecl[]` | `Ship \| Skip \| Later(duration)` |
+| `VariantType` | `constructors: ConstructorDecl[]` | `Ship \| Drop \| Later(duration)` |
 | `ConstructorDecl` | `name: string`, `args: TypeExpression[]` | `Later(duration)` |
 | `RecordType` | `fields: FieldDecl[]` | `{version: string}` |
 | `FieldDecl` | `name: string`, `type: TypeExpression` | `version: string` |
@@ -489,7 +489,7 @@ unchanged.
    duration=?) => outcome<report>`. A user function's optional labelled
    parameter has a default, as in `~on=[]`, and a call never writes `~x=?`.
 7. **`[a, b]` is a list.** §4 names `list<'a>` and §3 writes
-   `~options=[Ship, Skip]`, so the square-bracket literal builds an immutable
+   `~options=[Ship, Drop]`, so the square-bracket literal builds an immutable
    list. ReScript's arrays and `list{…}` are not part of Norn.
 8. **Time literals.** §4 says a time is "always with its offset". The
    accepted form is `YYYY-MM-DDTHH:MM`, then optionally `:SS`, then `Z` or

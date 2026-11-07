@@ -27,7 +27,7 @@ export function diagnosticLine(diagnostic: Diagnostic, file: string): string {
  * under the range:
  *
  *     error: expected '=>' after pattern, found 'run' at examples/decide.norn:4:13
- *      4 | | Done(Skip) run(@auto, "Record the decision")
+ *      4 | | Done(Drop) run(@auto, "Record the decision")
  *        |             ^^^
  */
 export function formatDiagnostic(diagnostic: Diagnostic, source: string, file: string): string {

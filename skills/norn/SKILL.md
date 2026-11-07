@@ -76,10 +76,10 @@ In `` `…${x}…` ``, only strings can be interpolated: write `${x->show}`. An
 refusal is not consent.
 
 ```norn
-type probe = Ship | Skip
+type probe = Ship | Drop
 
-switch ask(@alice, "Ship the billing probe?", ~options=[Ship, Skip], ~until=2026-11-07T12:00Z) {
-| Done(Skip) => run(@auto, "Record the decision: skip the billing probe")
+switch ask(@alice, "Ship the billing probe?", ~options=[Ship, Drop], ~until=2026-11-07T12:00Z) {
+| Done(Drop) => run(@auto, "Record the decision: drop the billing probe")
 | Done(Ship) | TimedOut => run(@auto, "Ship the billing probe as recommended: at most US$0.10")
 | other => fail(other)
 }

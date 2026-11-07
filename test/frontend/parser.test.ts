@@ -125,7 +125,7 @@ test("braces: records, blocks and the cases between", () => {
 
 test("lists, tuples and constructors", () => {
   assert.deepEqual(item("[]"), { kind: "ListLiteral", elements: [], rest: null });
-  assert.deepEqual(item("[Ship, Skip,]"), { kind: "ListLiteral", elements: [ctor("Ship"), ctor("Skip")], rest: null });
+  assert.deepEqual(item("[Ship, Drop,]"), { kind: "ListLiteral", elements: [ctor("Ship"), ctor("Drop")], rest: null });
   assert.deepEqual(item("[x, ...rest]"), { kind: "ListLiteral", elements: [id("x")], rest: id("rest") });
   assert.deepEqual(item("(a, b, c)"), { kind: "TupleLiteral", elements: [id("a"), id("b"), id("c")] });
   assert.deepEqual(item("((a))"), id("a"));
@@ -215,7 +215,7 @@ test("let, let rec with and, and destructuring", () => {
 
 test("type declarations: variants, records, aliases and parameters", () => {
   const name = (n: string, ...args: unknown[]) => ({ kind: "TypeName", name: n, args });
-  assert.deepEqual(item("type choice = Ship | Skip | Later(duration)"), {
+  assert.deepEqual(item("type choice = Ship | Drop | Later(duration)"), {
     kind: "TypeDecl",
     name: "choice",
     params: [],
@@ -223,7 +223,7 @@ test("type declarations: variants, records, aliases and parameters", () => {
       kind: "VariantType",
       constructors: [
         { kind: "ConstructorDecl", name: "Ship", args: [] },
-        { kind: "ConstructorDecl", name: "Skip", args: [] },
+        { kind: "ConstructorDecl", name: "Drop", args: [] },
         { kind: "ConstructorDecl", name: "Later", args: [name("duration")] },
       ],
     },
