@@ -39,20 +39,20 @@ for (const [name, open] of Object.entries({ memory: (c: VirtualClock) => new Mem
       assert.deepEqual(await store.effects("p"), []);
       await host.advanceTo(3_600_000); await host.pump(runtime);
       const request = await offered(store); assert.equal(request.holder, "@alice");
-      await host.reply(request, variant("Done", text("reviewed"))); await host.pump(runtime);
+      await host.reply(request, variant("Answered", text("reviewed"))); await host.pump(runtime);
       assert.equal((await store.load("p"))!.status, "completed");
     } finally { await store.close(); }
   });
 
   test(`${name}: Std followUp times out and transfers one request without changing its identity`, async () => {
     const clock = new VirtualClock(), store = open(clock), host = new SimulatedHost(store, clock);
-    const runtime = new Runtime(compile(tree('open Std\nfollowUp(@codex, "Progress?", ~until=1h, ~escalateTo=@alice)'), {std}), store, host);
+    const runtime = new Runtime(compile(tree('open Std\nfollowUp(@codex, "Progress?", ~within=1h, ~escalateTo=@alice)'), {std}), store, host);
     try {
       await runtime.create("p"); await host.pump(runtime); const first = await offered(store);
       await host.advanceTo(3_600_000); await host.pump(runtime); const next = await offered(store);
       assert.equal(first.id, next.id); assert.equal(next.epoch, 1); assert.equal(next.holder, "@alice");
-      assert.equal(await host.reply(first, variant("Done", text("obsolete"))), false);
-      await host.reply(next, variant("Done", text("current"))); await host.pump(runtime);
+      assert.equal(await host.reply(first, variant("Answered", text("obsolete"))), false);
+      await host.reply(next, variant("Answered", text("current"))); await host.pump(runtime);
       assert.equal((await store.load("p"))!.status, "completed");
     } finally { await store.close(); }
   });
@@ -62,9 +62,9 @@ test("Std functions have private lexical bindings and repeated open restores the
   const clock = new VirtualClock(), store = new MemoryStore(clock), host = new SimulatedHost(store, clock);
   const source = `
     let __norn_Std = 0
-    let ask = (who, question) => Done("wrong ask")
+    let ask = (who, question) => Answered("wrong ask")
     open Std
-    let remind = (who, question, ~at) => Done("wrong remind")
+    let remind = (who, question, ~at) => Answered("wrong remind")
     open Std
     remind(@alice, "Real ask", ~at=1h)
   `;
@@ -79,7 +79,7 @@ test("Std functions have private lexical bindings and repeated open restores the
 });
 
 test("restore pins the original library, even after its source changes", async () => {
-  const program = tree('open Std\nafter(1h)->wait?\nhelper()');
+  const program = tree('open Std\nafter(1h)->wait\nhelper()');
   const oldCode = compile(program, {std: tree('let helper = () => 1')});
   const newCode = compile(program, {std: tree('let helper = () => 2')});
   assert.notEqual(oldCode.id, newCode.id);
@@ -107,16 +107,16 @@ test("unopened code retains its exact hash and trailing opens preserve the final
   assert.throws(() => compileAstJson(astToJson(tree('open Std\nremind'))), /unlinked/);
 });
 
-test("generic ask options remain checked at runtime and message payloads use body", async () => {
+test("generic choose options remain checked at runtime and message payloads use body", async () => {
   const clock = new VirtualClock(), store = new MemoryStore(clock), host = new SimulatedHost(store, clock);
   try {
     for (const [id, options] of [["empty", "[]"], ["number", "[1]"], ["mixed", "[Ship, 1]"]]) {
-      const runtime = new Runtime(compile(tree(`let choose = options => ask(@alice, "Choose", ~options)\nchoose(${options})`)), store, host);
+      const runtime = new Runtime(compile(tree(`let helper = options => choose(@alice, "Choose", options)\nhelper(${options})->wait`)), store, host);
       await runtime.create(id); await host.pump(runtime);
       assert.equal((await store.load(id))!.status, "failed");
       assert.equal((await store.effects(id)).some(e => e.operation === "request.offer"), false);
     }
-    const source = 'message(channel"ops")->wait?->show';
+    const source = 'message(channel"ops")->wait->show';
     const runtime = new Runtime(compile(tree(source)), store, host);
     await runtime.create("message"); await host.pump(runtime);
     const participant: Value = {type: "participant", name: "alice", instance: null, labels: {}};

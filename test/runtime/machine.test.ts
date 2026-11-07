@@ -36,7 +36,7 @@ test("lexical capture survives JSON serialization and source reloading during an
   assert.equal(machine.control.kind, "effect");
   const encoded = snapshot(machine);
   code = compile(JSON.parse(JSON.stringify(p)) as Program);
-  machine = advance(code, resume(encoded, variant("Done", text("report")), 100));
+  machine = advance(code, resume(encoded, variant("Answered", text("report")), 100));
   assert.deepEqual(machine.control, { kind: "done", value: text("captured") });
 });
 
@@ -79,17 +79,17 @@ test("mutually recursive closures reference one durable environment", () => {
 });
 
 test("? returns from the nearest function and propagates explicitly at program level", () => {
-  const p = program(let_("f", lambda([], block(n("Try", { operand: constructor("Declined", str("busy")) }), str("unreachable")))),
+  const p = program(let_("f", lambda([], block(n("Try", { operand: constructor("Refused", str("busy")) }), str("unreachable")))),
     let_("answer", call("f")), n("TupleLiteral", { elements: [id("answer"), str("caller continued")] }));
-  assert.deepEqual(done(p), { type: "tuple", values: [variant("Declined", text("busy")), text("caller continued")] });
+  assert.deepEqual(done(p), { type: "tuple", values: [variant("Refused", text("busy")), text("caller continued")] });
   const code = compile(program(n("Try", { operand: constructor("Revoked") }), call("run", str("never"))));
   assert.deepEqual(advance(code, start(code)).control, { kind: "failed", outcome: variant("Revoked") });
 });
 
 test("patterns, guards and short circuiting do not perform skipped effects", () => {
   const cases = [n("Case", { pattern: variable("x"), guard: n("BoolLiteral", { value: false }), body: call("run", str("never")) }),
-    n("Case", { pattern: n("ConstructorPattern", { name: "Done", args: [variable("result")] }), guard: null, body: id("result") })];
-  assert.deepEqual(done(program(n("Switch", { scrutinee: constructor("Done", str("yes")), cases }))), text("yes"));
+    n("Case", { pattern: n("ConstructorPattern", { name: "Answered", args: [variable("result")] }), guard: null, body: id("result") })];
+  assert.deepEqual(done(program(n("Switch", { scrutinee: constructor("Answered", str("yes")), cases }))), text("yes"));
   assert.deepEqual(done(program(n("Binary", { op: "&&", left: n("BoolLiteral", { value: false }), right: call("judge", str("never")) }))), { type: "bool", value: false });
 });
 
@@ -98,7 +98,7 @@ test("record fields are data, including names inherited by JavaScript objects", 
   assert.deepEqual(done(program(n("FieldAccess", { record, field: "__proto__" }))), text("safe"));
   const code = compile(program(n("FieldAccess", { record: n("RecordLiteral", { spread: null, fields: [] }), field: "constructor" })));
   const result = advance(code, start(code));
-  assert.equal(result.control.kind, "failed");
+  assert.equal(result.control.kind, "error");
 });
 
 test("now is stable until a suspended machine resumes", () => {
@@ -113,10 +113,10 @@ test("forEach waits after its callback instead of treating the report as another
   const p = program(call("forEach", call("every", n("DurationLiteral", { amount: "1", unit: "d" })), lambda(["event"], call("run", str("job")))));
   const code = compile(p); let m = advance(code, start(code));
   assert.equal(m.control.kind, "effect");
-  m = advance(code, resume(m, variant("Done", text("tick")), 1));
+  m = advance(code, resume(m, text("tick"), 1));
   assert.equal(m.control.kind, "effect");
   if (m.control.kind === "effect") assert.equal(m.control.effect.name, "run");
-  m = advance(code, resume(snapshot(m), variant("Done", text("report")), 2));
+  m = advance(code, resume(snapshot(m), variant("Answered", text("report")), 2));
   assert.equal(m.control.kind, "effect");
   if (m.control.kind === "effect") assert.equal(m.control.effect.name, "wait");
 });

@@ -32,7 +32,10 @@ action.
 request assignment changes, waits and outgoing messages are committed with the
 continuation under the checkpoint revision check. A worker that loses the check
 cannot dispatch its abandoned intents. Temporary host/policy/storage failures
-propagate without changing a checkpoint; only program errors commit failure.
+propagate without changing a checkpoint. Program errors commit an explicit
+`{kind: "error", message}` machine state and an `execution.failed` notification
+whose arguments are `{kind: "program-error", message}`. They never become
+participant `Broke` replies. `fail(Answered(x))` is also a program error.
 Request answers and wait outcomes are independent, including after timeouts and
 handover. The host's `Policy` is required and is consulted for effects; a real
 transport must check current permissions again at delivery.
@@ -47,7 +50,7 @@ observation time and persists its monotonic floor. External event timestamps
 remain data. Hosts cannot pass a new clock value with a reply.
 
 This is an incremental prototype, not the entire draft specification. Request
-and event waits, merged alternatives, one-shot timers, message effects and
+and event waits, tagged alternatives, one-shot timers, message effects and
 scripted judging are implemented. Stream `map`/`filter`, durable structured
 `scope`, configurable concurrent/coalescing stream processing, child programs,
 real agent transports and host authorization integration are not implemented.
@@ -56,31 +59,49 @@ sequential and rearms a relative timer after each callback; it does not claim
 fixed-cadence or coalescing semantics. A production host also needs an alarm
 adapter; advancing the virtual clock is not a background polling service.
 
-An unsuccessful `forEach` handler outcome (`Declined`, `Failed`, `TimedOut`,
+An unsuccessful `forEach` handler reply (`Refused`, `Broke`, `NoReply`,
 `Cancelled` or `Revoked`) atomically queues an `execution.handler_failed`
 notification for the host to deliver to the program's author. Its continuation
 then listens for the next occurrence. A crash cannot advance past reporting
 without the notification intent, or create that intent twice for the same
 checkpoint. The simulated host records only a simulated delivery receipt;
-real author routing remains the production host's responsibility. Unit and
-`Done(_)` rearm without a notification. Unchecked callbacks returning another
+real author routing remains the production host's responsibility. Handlers receive the original event value. Unit and
+`Answered(_)` rearm without a notification. Unchecked callbacks returning another
 type discard the value; the typing rules reject them unless wrapped in
 `ignore(x)`. `ignore` evaluates its argument and yields unit, so it can
 explicitly discard an outcome as well. Calling `fail(o)` still terminates the
 program and queues the terminal failure notice.
 
-The same rule applies at the program boundary: a final unsuccessful outcome
+The same rule applies at the program boundary: a final unsuccessful reply
 fails the program and queues its terminal notice. A function can still return
-that outcome for its caller to inspect; `Done(_)` and ordinary final values
+that reply for its caller to inspect; `Answered(_)` and ordinary final values
 complete normally.
 
-`merge(a, b)` preserves the winning occurrence's value. `or(a, b)` accepts
-different stream element types and yields unit on either occurrence, including
-when nested inside another composition. `never()` has no occurrences: waiting
-on it persists an empty target set without becoming runnable on scans. An
-explicit `~until` still produces `TimedOut`. `status(request)` returns `None`
-while the request is open and `Some(outcome)` after settlement; timing out an
-explicit wait does not itself settle that request.
+Every request verb (`ask`, `confirm`, `choose`, `run`, `judge`) returns a
+handle. `r->wait` waits for its `reply`; `r->waitUntil(t)` returns
+`Some(reply)` or `None`. The request's optional `~by` deadline closes it
+`NoReply` independently of any wait. A wait timing out leaves it open;
+`status(r)` remains `None` until the request actually ends. Handover retains
+its original deadline and identity. Program termination cancels every request
+it leaves open, including unchecked dropped handles.
+
+An event wait returns its actual value, without `Answered`. `waitUntil` wraps
+it in `Some`, or returns `None`. `or(a, b)` preserves the winning value in
+`First` or `Second`, nesting those constructors through composition and
+restart. `never()` persists an empty target set, without becoming runnable on
+repeated scans; `never()->waitUntil(t)` can still return `None`.
+
+The simulated host rejects invalid answers, retains them as evidence and
+leaves the request open. `confirm` accepts `Yes`/`No`, `choose` an allowed
+constructor, `ask` text, `judge` a boolean, and `run` the reference host's
+report record `{text: string}`. An explicit `Refused` is distinct from an
+invalid answer. Request authority is rechecked on resumption; losing event
+observation authority ends the program `Revoked`. Policy or storage outages
+still propagate without committing a program error.
+
+Schema 8 and machine ABI `norn-cek:4` are required. Loading schema 7, restoring
+an ABI 3 checkpoint or resuming an ABI 3 snapshot reports both versions and
+refuses to reinterpret old semantics. A pinned AST does not bypass that fence.
 
 `after` accepts a positive duration or an absolute time. An absolute time already
 reached when the wait is registered is ready immediately; `every` continues to
@@ -105,7 +126,7 @@ import { Runtime } from './src/runtime/runtime.ts';
 import { SimulatedHost } from './src/runtime/simulated-host.ts';
 import { text, variant } from './src/runtime/value.ts';
 
-const parsed = parse('ask(@alice, "Ship?", ~until=1h)');
+const parsed = parse('ask(@alice, "Ship?", ~by=1h)->wait');
 if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
 const clock = new VirtualClock();
 const store = new SqliteStore(':memory:', clock);
@@ -116,7 +137,7 @@ try {
   await host.pump(runtime);
   const offer = (await store.effects('demo')).find(e => e.operation === 'request.offer');
   const request = await store.request(offer.arguments.requestId);
-  await host.reply(request, variant('Done', text('yes')));
+  await host.reply(request, variant('Answered', text('yes')));
   await host.pump(runtime);
   console.log((await store.load('demo')).status); // completed
 } finally {
@@ -126,6 +147,6 @@ JS
 ```
 
 To exercise expiry instead of a reply, replace the reply with `await
-host.advanceTo(3_600_000)`, then pump. This returns `TimedOut` and withdraws the
-convenience request. The four source examples and restart/crash checks run with
+host.advanceTo(3_600_000)`, then pump. The request ends `NoReply` and its holder receives a
+durable closure notice. The four source examples and restart/crash checks run with
 `npm test`.

@@ -33,7 +33,7 @@ await host.pump(runtime);
 const offer = (await store.effects('demo')).find(e => e.operation === 'request.offer');
 if (offer) {
   const request = await store.request((offer.arguments as {requestId: string}).requestId);
-  if (request) await host.reply(request, variant('Done', text('Reviewed')));
+  if (request) await host.reply(request, variant('Answered', text('Reviewed')));
 }
 runtime = await Runtime.restore('demo', store, host);
 await host.pump(runtime);
@@ -42,7 +42,10 @@ await store.close();
 
 `MemoryStore` implements the same asynchronous `DurableStore` contract as
 SQLite, including checkpoint compare-and-swap, atomic intents, request epochs,
-independent waits, deadlines, event cursors and lease recovery. It validates
+request-level `by` deadlines, observation-only `waitUntil`, event cursors,
+value-preserving source paths for `or`, and lease recovery. Request waits give
+replies; event waits give payloads directly. Invalid scripted answers are
+retained as evidence and leave the request open. It validates
 JSON and copies inputs and results: mutating a returned object cannot alter a
 stored checkpoint. Transactions are synchronous and roll back as a unit.
 There are no background jobs; the application drives the clock and scheduler.
@@ -73,7 +76,9 @@ original library, not loading today's version silently.
 Programs without `open Std` retain their original AST bytes and code identities.
 SHA-256 is implemented over UTF-8 using standard JavaScript primitives; known
 answers, block boundaries and Unicode inputs are compared with Node's crypto
-implementation in tests. This does not change the machine ABI or SQLite schema.
+implementation in tests. Both adapters use the same request/reply contract. This redesign requires
+machine ABI `norn-cek:4` and SQLite schema 8; older states are explicitly
+refused rather than silently upgraded. Memory sessions use the same ABI fence.
 
 ## Checks
 

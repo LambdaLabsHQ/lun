@@ -17,9 +17,9 @@ function source(contents: string) {
 
 test("each final unsuccessful outcome fails visibly rather than completing", async () => {
   const cases: [string, Value][] = [
-    ['Declined("no")', variant("Declined", text("no"))],
-    ['Failed("fault")', variant("Failed", text("fault"))],
-    ['TimedOut', variant("TimedOut")], ['Cancelled', variant("Cancelled")], ['Revoked', variant("Revoked")],
+    ['Refused("no")', variant("Refused", text("no"))],
+    ['Broke("fault")', variant("Broke", text("fault"))],
+    ['NoReply', variant("NoReply")], ['Cancelled', variant("Cancelled")], ['Revoked', variant("Revoked")],
   ];
   for (const [expression, expected] of cases) {
     const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
@@ -39,32 +39,32 @@ test("each final unsuccessful outcome fails visibly rather than completing", asy
 
 test("a program ending in run reports a participant failure without requiring explicit ?", async () => {
   const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
-  const runtime = new Runtime(source('run(@codex, "Do the task")'), store, host);
+  const runtime = new Runtime(source('run(@codex, "Do the task")->wait'), store, host);
   try {
     await runtime.create("p"); await host.pump(runtime);
     const offer = (await store.effects("p")).find(effect => effect.operation === "request.offer")!;
     const request = (await store.request((offer.arguments as { requestId: string }).requestId))!;
-    await host.reply(request, variant("Failed", text("could not finish"))); await host.pump(runtime);
+    await host.reply(request, variant("Broke", text("could not finish"))); await host.pump(runtime);
     assert.equal((await store.load("p"))!.status, "failed");
     const terminal = (await store.effects("p")).filter(effect => effect.operation === "execution.failed");
     assert.equal(terminal.length, 1);
-    assert.deepEqual(terminal[0].arguments, variant("Failed", text("could not finish")));
+    assert.deepEqual(terminal[0].arguments, variant("Broke", text("could not finish")));
   } finally { await store.close(); }
 });
 
 test("a function may return failure for its caller to handle", () => {
   const code = source(`
-    let check = () => Failed("recoverable")
+    let check = () => Broke("recoverable")
     switch check() {
-    | Failed(reason) => Done(reason)
+    | Broke(reason) => Answered(reason)
     | other => other
     }
   `);
-  assert.deepEqual(advance(code, start(code)).control, { kind: "done", value: variant("Done", text("recoverable")) });
+  assert.deepEqual(advance(code, start(code)).control, { kind: "done", value: variant("Answered", text("recoverable")) });
 });
 
 test("successful outcomes and ordinary final values still complete normally", () => {
-  for (const expression of ['Done("ok")', '42', '()', 'None', 'ignore(Failed("discarded"))']) {
+  for (const expression of ['Answered("ok")', '42', '()', 'None', 'ignore(Broke("discarded"))']) {
     const code = source(expression);
     assert.equal(advance(code, start(code)).control.kind, "done", expression);
   }

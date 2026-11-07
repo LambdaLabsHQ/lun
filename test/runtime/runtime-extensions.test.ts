@@ -23,17 +23,17 @@ test("a 10,000-stage source pipe compiles and executes without a native traversa
 });
 
 test("show is callable in source and through a pipe without a host effect", () => {
-  const code = source('(show(2026-11-07T12:00Z), 1h->show, show(@alice), show(Done("yes")))');
+  const code = source('(show(2026-11-07T12:00Z), 1h->show, show(@alice), show(Answered("yes")))');
   const machine = advance(code, start(code));
   assert.deepEqual(machine.control, { kind: "done", value: { type: "tuple", values: [
-    text("2026-11-07T12:00:00.000Z"), text("1h"), text("@alice"), text("Done(yes)"),
+    text("2026-11-07T12:00:00.000Z"), text("1h"), text("@alice"), text("Answered(yes)"),
   ] } });
 });
 
 test("show rejects a missing value, extra positional values and unknown labels", () => {
   for (const call of ['show()', 'show(1, 2)', 'show(1, ~extra=2)']) {
     const code = source(call), machine = advance(code, start(code));
-    assert.equal(machine.control.kind, "failed", call);
+    assert.equal(machine.control.kind, "error", call);
   }
 });
 
@@ -41,7 +41,7 @@ test("after accepts an absolute time and resumes when that instant is observed",
   const at = Date.parse("2026-11-07T12:00Z");
   const clock = new VirtualClock(at - 60_000), store = new SqliteStore(":memory:", clock);
   const host = new SimulatedHost(store, clock);
-  const runtime = new Runtime(source('after(2026-11-07T12:00Z)->wait?->show'), store, host);
+  const runtime = new Runtime(source('after(2026-11-07T12:00Z)->wait->show'), store, host);
   try {
     await runtime.create("at"); await host.pump(runtime);
     assert.equal((await store.load("at"))!.status, "suspended");
@@ -59,7 +59,7 @@ test("an elapsed absolute timer is ready immediately and every still requires a 
   const clock = new VirtualClock(at + 1), store = new SqliteStore(":memory:", clock);
   const host = new SimulatedHost(store, clock);
   try {
-    const elapsed = new Runtime(source('after(2026-11-07T12:00Z)->wait?'), store, host);
+    const elapsed = new Runtime(source('after(2026-11-07T12:00Z)->wait'), store, host);
     await elapsed.create("elapsed"); await host.pump(elapsed);
     assert.equal((await store.load("elapsed"))!.status, "completed");
     const invalid = new Runtime(source('every(2026-11-07T12:00Z)->wait'), store, host);
@@ -70,7 +70,7 @@ test("an elapsed absolute timer is ready immediately and every still requires a 
 
 
 test("restoration retains a stored AST identity when the current writer uses another layout", async () => {
-  const canonical = source('ask(@alice, "Question?")');
+  const canonical = source('ask(@alice, "Question?")->wait');
   const saved = compileAstJson(`${JSON.stringify(JSON.parse(canonical.ast), null, 2)}\n`);
   assert.notEqual(saved.id, canonical.id);
   const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
@@ -82,7 +82,7 @@ test("restoration retains a stored AST identity when the current writer uses ano
     assert.equal(restored.code.ast, saved.ast);
     const offer = (await store.effects("legacy")).find(effect => effect.operation === "request.offer")!;
     const request = (await store.request((offer.arguments as { requestId: string }).requestId))!;
-    await host.reply(request, variant("Done", text("answer"))); await host.pump(restored);
+    await host.reply(request, variant("Answered", text("answer"))); await host.pump(restored);
     assert.equal((await store.load("legacy"))!.status, "completed");
   } finally { await store.close(); }
 });

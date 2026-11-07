@@ -21,12 +21,12 @@ const ci = (repo = "acme/api"): Value => ({ type: "source", kind: "stream", name
 const hour = 3_600_000;
 
 for (const winner of ["event", "timer"]) {
-  test(`or discards the ${winner} value across restart before and after resolution`, async (t) => {
+  test(`or preserves the ${winner} value across restart before and after resolution`, async (t) => {
     const directory = mkdtempSync(join(tmpdir(), "norn-or-")), path = join(directory, "state.sqlite");
     t.after(() => rmSync(directory, { recursive: true, force: true }));
     const clock = new VirtualClock();
     let store = new SqliteStore(path, clock), host = new SimulatedHost(store, clock);
-    let runtime = new Runtime(source('ciFailed("acme/api")->or(after(1h))->wait'), store, host);
+    let runtime = new Runtime(source('never()->or(ciFailed("acme/api"))->or(after(1h))->wait'), store, host);
     await runtime.create("p"); await host.pump(runtime);
     assert.equal((await store.load("p"))!.status, "suspended");
     await store.close(); store = new SqliteStore(path, clock); host = new SimulatedHost(store, clock);
@@ -38,29 +38,29 @@ for (const winner of ["event", "timer"]) {
       await host.pump(runtime);
       const checkpoint = (await store.load("p"))!;
       assert.equal(checkpoint.status, "completed");
-      assert.deepEqual((checkpoint.snapshot as { control: unknown }).control, { kind: "done", value: variant("Done", unit) });
+      assert.deepEqual((checkpoint.snapshot as { control: unknown }).control, { kind: "done", value: winner === "event" ? variant("First", variant("Second", text("private incident details"))) : variant("Second", {type: "time", value: String(hour)}) });
     } finally { await store.close(); }
   });
 }
 
-test("nested or discards values even when merge is the outer composition", async () => {
+test("nested or preserves the full source constructor path", async () => {
   const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
-  const runtime = new Runtime(source('ciFailed("a")->merge(ciFailed("b"))->or(never())->merge(never())->wait'), store, host);
+  const runtime = new Runtime(source('ciFailed("a")->or(ciFailed("b"))->or(never())->wait'), store, host);
   try {
     await runtime.create("p"); await host.pump(runtime);
     await host.emit("b", ci("b"), text("not unit")); await host.pump(runtime);
-    assert.deepEqual(((await store.load("p"))!.snapshot as { control: unknown }).control, { kind: "done", value: variant("Done", unit) });
+    assert.deepEqual(((await store.load("p"))!.snapshot as { control: unknown }).control, { kind: "done", value: variant("First", variant("Second", text("not unit"))) });
   } finally { await store.close(); }
 });
 
-test("merge preserves payloads from either stream", async () => {
+test("or preserves tagged payloads from either stream", async () => {
   for (const repo of ["a", "b"]) {
     const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
-    const runtime = new Runtime(source('ciFailed("a")->merge(ciFailed("b"))->wait'), store, host);
+    const runtime = new Runtime(source('ciFailed("a")->or(ciFailed("b"))->wait'), store, host);
     try {
       await runtime.create("p"); await host.pump(runtime);
       await host.emit("ci", ci(repo), text(`incident in ${repo}`)); await host.pump(runtime);
-      assert.deepEqual(((await store.load("p"))!.snapshot as { control: unknown }).control, { kind: "done", value: variant("Done", text(`incident in ${repo}`)) });
+      assert.deepEqual(((await store.load("p"))!.snapshot as { control: unknown }).control, { kind: "done", value: variant(repo === "a" ? "First" : "Second", text(`incident in ${repo}`)) });
     } finally { await store.close(); }
   }
 });
@@ -91,16 +91,16 @@ test("never stays suspended after restart, unrelated events and repeated schedul
 
 test("never permits a deadline and empty alternatives cannot produce a spurious occurrence", async () => {
   const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
-  const runtime = new Runtime(source('never()->or(never())->wait(~until=1h)'), store, host);
+  const runtime = new Runtime(source('never()->or(never())->waitUntil(1h)'), store, host);
   try {
     await runtime.create("p"); await host.pump(runtime);
     await host.advanceTo(hour - 1); assert.equal(await host.pump(runtime), 0);
     await host.advanceTo(hour); await host.pump(runtime);
-    assert.deepEqual(((await store.load("p"))!.snapshot as { control: unknown }).control, { kind: "failed", outcome: variant("TimedOut") });
+    assert.deepEqual(((await store.load("p"))!.snapshot as { control: unknown }).control, { kind: "done", value: variant("None") });
   } finally { await store.close(); }
 });
 
-test("forEach rearms or and passes unit to the handler on successive occurrences", async () => {
+test("forEach rearms or and passes tagged values to the handler on successive occurrences", async () => {
   const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock), host = new SimulatedHost(store, clock);
   const runtime = new Runtime(source('never()->or(ciFailed("acme/api"))->forEach(x => say(@alice, show(x)))'), store, host);
   try {
@@ -110,7 +110,7 @@ test("forEach rearms or and passes unit to the handler on successive occurrences
       assert.equal((await store.load("p"))!.status, "suspended");
     }
     const messages = (await store.effects("p")).filter(effect => effect.operation === "say");
-    assert.deepEqual(messages.map(effect => (effect.arguments as unknown as { args: Value[] }).args[1]), [text("()"), text("()")]);
+    assert.deepEqual(messages.map(effect => (effect.arguments as unknown as { args: Value[] }).args[1]), [text("Second(first)"), text("Second(second)")]);
   } finally { await store.close(); }
 });
 
@@ -121,7 +121,7 @@ test("stream combinators reject non-stream arguments, wrong arity and labels", (
     'merge(never())', 'merge(never(), never(), never())', 'merge(never(), never(), ~unused=1)',
   ]) {
     const code = source(expression);
-    assert.equal(advance(code, start(code)).control.kind, "failed", expression);
+    assert.equal(advance(code, start(code)).control.kind, "error", expression);
   }
 });
 
