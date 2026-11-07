@@ -105,6 +105,7 @@ their work together borrows its name.
 - [Types and the type checker](docs/types.md)
 - [Syntax tree (AST) and syntax decisions](docs/ast.md)
 - [Durable runtime research](docs/research/runtime.md)
+- For models: [a skill for writing Norn](skills/norn/SKILL.md) and [llms.txt](llms.txt)
 
 ## Building
 
