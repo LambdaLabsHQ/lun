@@ -1,6 +1,6 @@
 /**
  * A program running against a simulated team, in the page. The visitor plays
- * the team: answers, declines or fails requests, moves the virtual clock and
+ * the team: answers, refuses or breaks requests, moves the virtual clock and
  * fires the host's facts and streams. This module drives the reference
  * runtime (`src/runtime/browser.ts`) and keeps what happened as a timeline of
  * plain data; it knows nothing of the page.
@@ -13,7 +13,7 @@
 import type { Program } from "../../src/frontend/ast.ts";
 import {
   MemoryStore, Runtime, SimulatedHost, VirtualClock, compile, text, variant,
-  type Checkpoint, type ExecutionStatus, type Json, type RequestOutcome, type StoredWait, type Value, type WaitOutcome, type WaitTarget,
+  type Checkpoint, type ExecutionStatus, type Json, type RequestOutcome, type StoredWait, type Value, type WaitOutcome,
 } from "../../src/runtime/browser.ts";
 import { code, either, literal, participant, quote, source, time, type Run } from "./words.ts";
 
@@ -27,27 +27,33 @@ export interface RequestInfo {
   id: string;
   /** Who holds it now, as in `@alice`; `@judge` for `judge`. */
   holder: string;
-  /** The built-in that made it: ask, run, request, start or judge. */
-  name: "ask" | "run" | "request" | "start" | "judge";
+  /** The verb that made it. */
+  name: "ask" | "confirm" | "choose" | "run" | "judge";
   /** The question, the task or the condition. */
   text: string;
-  /** The options of an `ask` that declared them. */
+  /** The options of a `choose`; `Yes` and `No` for a `confirm`. */
   options: Value[] | null;
+  /** The request's own deadline (`~by`), on the store's clock: past it, the request ends `NoReply`. */
+  by: number | null;
 }
 
 export type Entry =
   | { kind: "offered"; at: number; request: RequestInfo }
   | { kind: "handedOver"; at: number; request: RequestInfo; from: string; to: string }
   | { kind: "closed"; at: number; request: RequestInfo; outcome: RequestOutcome }
+  /** An answer the host could not map, such as an option the request did not offer: kept as evidence, and the request stays open. */
+  | { kind: "rejected"; at: number; request: RequestInfo; answer: string; reason: string }
   | { kind: "said"; at: number; to: string; text: string }
   /** `targets` reads after "Waiting", as in "for @alice’s answer to “…”"; `deadline` after that, as in " until 2026-11-07 12:00 UTC". */
   | { kind: "waiting"; at: number; targets: Run[]; deadline: Run[] }
   /** A wait ended by an event or a timer; the value it gave, unless that is `()` or a time. */
   | { kind: "woke"; at: number; outcome: string | null }
-  | { kind: "timedOut"; at: number; targets: Run[] }
+  /** A `waitUntil` ran out before what it waited for: only the wait ends. */
+  | { kind: "elapsed"; at: number; targets: Run[]; open: boolean }
   | { kind: "fired"; at: number; source: string; mode: "fact" | "stream"; value: string }
   | { kind: "handlerFailed"; at: number; outcome: string }
-  | { kind: "ended"; at: number; status: Exclude<ExecutionStatus, "ready" | "suspended">; outcome: string };
+  /** `outcome` is the program's result, or the text of a program error when `error` is true. */
+  | { kind: "ended"; at: number; status: Exclude<ExecutionStatus, "ready" | "suspended">; outcome: string; error: boolean };
 
 export interface OpenRequest extends RequestInfo {
   epoch: number;
@@ -70,7 +76,7 @@ export interface SimulationState {
   waiting: { targets: Run[]; deadline: Run[]; until: number | null } | null;
   requests: OpenRequest[];
   events: AwaitedEvent[];
-  /** The earliest deadline or timer of the current wait, if one is still ahead. */
+  /** The earliest deadline still ahead: of the current wait, a timer it waits on, or an open request's `~by`. */
   nextDeadline: number | null;
   timeline: Entry[];
   /** The runtime itself stopped with an error: a bug to show, not an outcome of the program. */
@@ -164,25 +170,38 @@ export class Simulation {
 
   // The visitor's actions --------------------------------------------------------
 
-  /** Settles a request as its holder: Done with a value, Declined or Failed with a reason. */
+  /**
+   * Replies to a request as its holder: Answered with a value, Refused or
+   * Broke with a reason. An answer the host cannot map is refused at its
+   * boundary; the timeline says so, and the request stays open.
+   */
   async reply(requestId: string, outcome: Value): Promise<boolean> {
     return this.act(async () => {
       const request = await this.store.request(requestId);
       if (request === null || request.outcome !== null) return false;
-      return this.host.reply(request, outcome);
+      const accepted = await this.host.reply(request, outcome);
+      if (!accepted) {
+        const evidence = (await this.store.requestEvidence(requestId)).at(-1);
+        const info = this.requests.get(requestId);
+        const answer = outcome.type === "variant" && outcome.name === "Answered" && outcome.args.length === 1 ? outcome.args[0]! : outcome;
+        if (info !== undefined && evidence?.invalidReason != null) {
+          this.timeline.push({ kind: "rejected", at: this.clock.now(), request: { ...info, holder: request.holder }, answer: literal(answer), reason: evidence.invalidReason });
+        }
+      }
+      return accepted;
     });
   }
 
   answer(requestId: string, value: Value): Promise<boolean> {
-    return this.reply(requestId, variant("Done", value));
+    return this.reply(requestId, variant("Answered", value));
   }
 
-  decline(requestId: string, reason: string): Promise<boolean> {
-    return this.reply(requestId, variant("Declined", text(reason)));
+  refuse(requestId: string, reason: string): Promise<boolean> {
+    return this.reply(requestId, variant("Refused", text(reason)));
   }
 
-  fail(requestId: string, reason: string): Promise<boolean> {
-    return this.reply(requestId, variant("Failed", text(reason)));
+  broke(requestId: string, reason: string): Promise<boolean> {
+    return this.reply(requestId, variant("Broke", text(reason)));
   }
 
   /** Fires a fact, which then holds, or one occurrence of a stream. */
@@ -294,7 +313,7 @@ export class Simulation {
     const checkpoint = await this.store.load(EXECUTION);
     if (checkpoint === null) return;
 
-    // Waits that ended: a timeout or a wake-up by an event or a timer. A request's outcome has its own entry.
+    // Waits that ended: a waitUntil that ran out, or a wake-up by an event or a timer. A request's reply has its own entry.
     for (const [id, reported] of this.waits) {
       if (reported) continue;
       const wait = await this.store.wait(id);
@@ -310,7 +329,7 @@ export class Simulation {
       switch (effect.operation) {
         case "request.offer": {
           if ((args.epoch as number) !== 0) break; // A handover's offer; request.released tells it.
-          const info = requestInfo(args.requestId as string, args.holder as string, args.arguments as unknown as EffectJson);
+          const info = requestInfo(args.requestId as string, args.holder as string, (args.by as number | null | undefined) ?? null, args.arguments as unknown as EffectJson);
           this.requests.set(info.id, info);
           this.timeline.push({ kind: "offered", at: now, request: info });
           break;
@@ -355,7 +374,7 @@ export class Simulation {
     }
 
     if (TERMINAL.has(checkpoint.status) && !TERMINAL.has(this.checkpoint?.status ?? "ready")) {
-      this.timeline.push({ kind: "ended", at: now, status: checkpoint.status as "completed" | "failed" | "revoked" | "cancelled", outcome: finalOutcome(checkpoint) });
+      this.timeline.push({ kind: "ended", at: now, status: checkpoint.status as "completed" | "failed" | "revoked" | "cancelled", ...finalOutcome(checkpoint) });
     }
     this.computing = checkpoint.status === "ready";
     this.checkpoint = checkpoint;
@@ -364,18 +383,18 @@ export class Simulation {
   }
 
   private async waitEnded(wait: StoredWait, outcome: WaitOutcome): Promise<void> {
-    if (outcome.tag === "TimedOut") {
-      this.timeline.push({ kind: "timedOut", at: wait.until ?? this.clock.now(), targets: (await this.describeWait(wait)).targets });
+    if (outcome.tag === "Elapsed") {
+      const open = wait.targets.some((target) => target.kind === "request");
+      this.timeline.push({ kind: "elapsed", at: wait.until ?? this.clock.now(), targets: (await this.describeWait(wait)).targets, open });
       return;
     }
-    // A request's outcome is told by request.closed.
-    if (wait.targets.some((target) => target.kind === "request")) return;
+    // A request's reply is told by request.closed.
+    if (outcome.tag === "Reply") return;
     const now = this.clock.now();
     const timers = wait.targets.flatMap((target) => (target.kind === "timer" && target.at <= now ? [target.at] : []));
     const byTimer = timers.length > 0 && !wait.targets.some((target) => target.kind === "event");
-    const value = outcome.tag === "Done" ? outcome.value as unknown as Value : null;
-    const plain = value === null || value.type === "unit" || value.type === "time";
-    this.timeline.push({ kind: "woke", at: byTimer ? Math.min(...timers) : now, outcome: plain ? null : outcomeText(outcome) });
+    const value = outcome.value as unknown as Value;
+    this.timeline.push({ kind: "woke", at: byTimer ? Math.min(...timers) : now, outcome: wakeValue(value) });
   }
 
   /**
@@ -392,9 +411,10 @@ export class Simulation {
         const info = this.requests.get(target.id);
         if (stored === null || info === undefined) continue;
         const holder = participant(stored.holder);
-        if (info.name === "judge") requests.push(["for the judge to decide ", quote(info.text)]);
-        else if (info.name === "run" || info.name === "start") requests.push(["for ", holder, " to finish ", quote(info.text)]);
-        else requests.push(["for ", holder, "’s answer to ", quote(info.text)]);
+        const due: Run[] = stored.by === null ? [] : [", due by ", time(stored.by)];
+        if (info.name === "judge") requests.push(["for the judge to decide ", quote(info.text), ...due]);
+        else if (info.name === "run") requests.push(["for ", holder, " to finish ", quote(info.text), ...due]);
+        else requests.push(["for ", holder, "’s answer to ", quote(info.text), ...due]);
       } else if (target.kind === "timer") {
         timers.push(["until ", time(target.at)]);
       } else {
@@ -415,15 +435,20 @@ export class Simulation {
     let wait: StoredWait | null = null;
     if (checkpoint?.status === "suspended" && checkpoint.waitingFor?.kind === "wait") wait = await this.store.wait(checkpoint.waitingFor.id);
     const awaited = new Set(wait?.outcome === null ? wait.targets.flatMap((target) => (target.kind === "request" ? [target.id] : [])) : []);
+    const dues: number[] = [];
     for (const info of this.requests.values()) {
       const stored = await this.store.request(info.id);
       if (stored === null || stored.outcome !== null) continue;
-      requests.push({ ...info, holder: stored.holder, epoch: stored.epoch, awaited: awaited.has(info.id) });
+      requests.push({ ...info, holder: stored.holder, by: stored.by, epoch: stored.epoch, awaited: awaited.has(info.id) });
+      if (stored.by !== null) dues.push(stored.by);
     }
     const open = wait !== null && wait.outcome === null ? wait : null;
-    const deadlines = open === null ? [] : [
-      ...(open.until === null ? [] : [open.until]),
-      ...open.targets.flatMap((target) => (target.kind === "timer" ? [target.at] : [])),
+    const deadlines = [
+      ...dues,
+      ...(open === null ? [] : [
+        ...(open.until === null ? [] : [open.until]),
+        ...open.targets.flatMap((target) => (target.kind === "timer" ? [target.at] : [])),
+      ]),
     ].filter((at) => at > now);
     const waiting = open === null ? null : this.timeline.findLast((entry): entry is Entry & { kind: "waiting" } => entry.kind === "waiting") ?? null;
     return {
@@ -448,35 +473,32 @@ interface EffectJson {
   labels: Record<string, Value>;
 }
 
-function requestInfo(id: string, holder: string, effect: EffectJson): RequestInfo {
+function requestInfo(id: string, holder: string, by: number | null, effect: EffectJson): RequestInfo {
   const name = effect.name as RequestInfo["name"];
   const said = name === "judge" ? effect.args[0] : effect.args[1];
-  const options = effect.labels.options;
+  const choices = effect.args[2];
   return {
     id,
     holder,
     name,
     text: said?.type === "string" ? said.value : said === undefined ? "" : literal(said),
-    options: name === "ask" && options?.type === "list" ? options.values : null,
+    options: name === "choose" && choices?.type === "list" ? choices.values : name === "confirm" ? [variant("Yes"), variant("No")] : null,
+    by,
   };
 }
 
-function outcomeText(outcome: WaitOutcome | RequestOutcome): string {
-  switch (outcome.tag) {
-    case "Done":
-      return `Done(${literal(outcome.value as unknown as Value)})`;
-    case "Declined":
-    case "Failed":
-      return `${outcome.tag}(${JSON.stringify(outcome.reason)})`;
-    default:
-      return outcome.tag;
-  }
+/** What a wake-up gave, for the timeline: nothing for `()` or a time, and the path an `or` took around the value. */
+function wakeValue(value: Value): string | null {
+  let inner = value;
+  while (inner.type === "variant" && (inner.name === "First" || inner.name === "Second") && inner.args.length === 1) inner = inner.args[0]!;
+  return inner.type === "unit" || inner.type === "time" ? null : literal(value);
 }
 
-/** How the program ended, from its last checkpoint: its value, or the outcome it failed with. */
-function finalOutcome(checkpoint: Checkpoint): string {
-  const control = (checkpoint.snapshot as unknown as { control?: { kind?: string; value?: Value; outcome?: Value } }).control;
-  if (control?.kind === "done" && control.value !== undefined) return literal(control.value);
-  if (control?.kind === "failed" && control.outcome !== undefined) return literal(control.outcome);
-  return checkpoint.status;
+/** How the program ended, from its last checkpoint: its value, the reply it failed with, or a program error. */
+function finalOutcome(checkpoint: Checkpoint): { outcome: string; error: boolean } {
+  const control = (checkpoint.snapshot as unknown as { control?: { kind?: string; value?: Value; outcome?: Value; message?: string } }).control;
+  if (control?.kind === "done" && control.value !== undefined) return { outcome: literal(control.value), error: false };
+  if (control?.kind === "failed" && control.outcome !== undefined) return { outcome: literal(control.outcome), error: false };
+  if (control?.kind === "error" && control.message !== undefined) return { outcome: control.message, error: true };
+  return { outcome: checkpoint.status, error: false };
 }

@@ -9,7 +9,7 @@ import { fieldInput, type FieldInput } from "./forms.ts";
 import type { Value } from "../../src/runtime/browser.ts";
 import type { AwaitedEvent, OpenRequest, Simulation, SimulationState } from "./simulation.ts";
 import { sentence, tell } from "./story.ts";
-import { formatDate, formatTimeOfDay, formatWeekday, source as sourceText, type Run } from "./words.ts";
+import { formatDate, formatTime, formatTimeOfDay, formatWeekday, source as sourceText, type Run } from "./words.ts";
 
 export interface RunElements {
   /** The scrolling part of the column, which follows the thread's end. */
@@ -141,11 +141,12 @@ export function createRunPanel(elements: RunElements, host: Host): RunPanel {
 
     const who: Run[] =
       request.name === "judge" ? ["The judge decides this. Decide as the judge."]
-      : request.name === "run" || request.name === "start" ? [{ kind: "participant", text: request.holder }, " has this task. Finish it as them."]
+      : request.name === "run" ? [{ kind: "participant", text: request.holder }, " has this task. Finish it as them."]
       : [{ kind: "participant", text: request.holder }, " is asked. Answer as them."];
+    const due: Run[] = request.by === null ? [] : [" With no reply by ", { kind: "time", text: formatTime(request.by) }, ", it ends as no reply."];
     card.append(
       el("h3", { class: "card-question" }, request.text),
-      el("p", { class: "card-who" }, ...runs(who), ...(request.awaited ? [] : [" Nothing waits for it yet: the answer is kept until the program looks."])),
+      el("p", { class: "card-who" }, ...runs(who), ...runs(due), ...(request.awaited ? [] : [" Nothing waits for it yet: the reply is kept until the program looks."])),
     );
 
     if (request.name === "judge") {
@@ -161,10 +162,10 @@ export function createRunPanel(elements: RunElements, host: Host): RunPanel {
         actions.append(button);
       }
     } else {
-      const report = request.name === "run" || request.name === "start";
+      const report = request.name === "run";
       const field: Field = report ? fieldFor({ kind: "TypeName", name: "report", args: [], span: SPAN }, host.types) : { kind: "text", type: "string" };
       const input = fieldInput(field, report ? "Report" : "Answer", "", true);
-      const form = el("form", { class: "card-answer" }, input.element, el("button", { type: "submit", class: "choice" }, report ? "Done" : "Answer"));
+      const form = el("form", { class: "card-answer" }, input.element, el("button", { type: "submit", class: "choice" }, report ? "Finish" : "Answer"));
       form.addEventListener("submit", (event) => {
         event.preventDefault();
         const read = valueOf(field, input.read());
@@ -175,24 +176,25 @@ export function createRunPanel(elements: RunElements, host: Host): RunPanel {
     }
 
     const refusals = el("span", { class: "card-refusals" });
-    for (const [label, verb] of request.name === "run" || request.name === "start" ? [["Failed…", "fail"]] as const : [["Decline…", "decline"], ["Fail…", "fail"]] as const) {
+    // Any request can be refused, or broken: tried, and not done.
+    for (const [label, verb] of [["Refuse…", "refuse"], ["Broke…", "broke"]] as const) {
       const button = el("button", { type: "button", class: "quiet-button" }, label);
       button.addEventListener("click", () => openReason(verb));
       refusals.append(button);
     }
     actions.append(refusals);
 
-    const openReason = (verb: "decline" | "fail") => {
-      const input = el("input", { type: "text", "aria-label": verb === "decline" ? "Why decline" : "What failed", placeholder: verb === "decline" ? "Why decline?" : "What failed?", autocomplete: "off" });
+    const openReason = (verb: "refuse" | "broke") => {
+      const input = el("input", { type: "text", "aria-label": verb === "refuse" ? "Why refuse" : "What went wrong", placeholder: verb === "refuse" ? "Why refuse?" : "What went wrong?", autocomplete: "off" });
       reason.replaceChildren(input,
-        el("button", { type: "submit", class: "choice" }, verb === "decline" ? "Decline" : "Fail"),
+        el("button", { type: "submit", class: "choice" }, verb === "refuse" ? "Refuse" : "Broke"),
         el("button", { type: "button", class: "quiet-button", "data-cancel": "" }, "Cancel"));
       reason.hidden = false;
       reason.querySelector("[data-cancel]")!.addEventListener("click", () => (reason.hidden = true));
       reason.onsubmit = (event) => {
         event.preventDefault();
-        const why = input.value.trim() || (verb === "decline" ? "Declined without a reason" : "Failed without a reason");
-        busy(() => (verb === "decline" ? simulation!.decline(request.id, why) : simulation!.fail(request.id, why)));
+        const why = input.value.trim() || (verb === "refuse" ? "Refused without a reason" : "Could not do it, without a reason");
+        busy(() => (verb === "refuse" ? simulation!.refuse(request.id, why) : simulation!.broke(request.id, why)));
       };
       input.focus();
     };
