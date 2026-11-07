@@ -9,6 +9,23 @@ const initial: InitialCheckpoint = { executionId: "p", codeId: "code", machineVe
 const stores = { memory: (clock: VirtualClock): DurableStore => new MemoryStore(clock), sqlite: (clock: VirtualClock): DurableStore => new SqliteStore(":memory:", clock) };
 
 for (const [name, open] of Object.entries(stores)) {
+  test(`${name}: a convenience deadline withdraws before accepting a late reply without a scan`, async () => {
+    const clock = new VirtualClock(), store = open(clock);
+    try {
+      await store.create(initial);
+      const id = requestId("p", 1), wait = waitId("p", 1);
+      await store.commit((await store.load("p"))!, { status: "suspended", snapshot: "waiting",
+        requests: [{ holder: "alice", arguments: "question" }],
+        waits: [{ targets: [{ kind: "request", id }], until: 100, withdrawOnTimeout: [id] }], waitingFor: { kind: "wait", id: wait } });
+      clock.advanceTo(101);
+      assert.equal(await store.settleRequest(id, 0, "alice", { tag: "Done", value: "late" }), false);
+      assert.deepEqual((await store.request(id))!.outcome, { tag: "Cancelled" });
+      assert.deepEqual((await store.wait(wait))!.outcome, { tag: "TimedOut" });
+      assert.equal((await store.requestEvidence(id))[0].accepted, false);
+      assert.equal((await store.effects("p")).find(e => e.operation === "request.offer")!.status, "withdrawn");
+    } finally { await store.close(); }
+  });
+
   test(`${name}: checkpoint CAS, independent wait expiry, handover and late evidence`, async () => {
     const clock = new VirtualClock(), store = open(clock);
     try {
