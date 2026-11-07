@@ -152,7 +152,7 @@ The typing rules, built-in signatures and exhaustiveness checks are in
 
 | Type | Literals and notes |
 |---|---|
-| `string`, `int`, `float`, `bool`, `unit` | As in ReScript. Templates are `` `…${x}…` ``. |
+| `string`, `int`, `float`, `bool`, `unit` | As in ReScript, except that `int` has arbitrary precision: there is no 32-bit overflow. Templates are `` `…${x}…` `` and interpolate strings. |
 | `time`, `duration` | `2026-11-07T12:00Z` (always with its offset); `30m`, `2h`, `1d`, `1w`. A `~until=` takes either a time or a duration from now. |
 | `participant` | `@alice`, `@codex`, `@codex:2` (one instance), `@auto` (the host picks a suitable agent). People and agents are values: they can be passed, stored and compared. Naming a participant grants nothing (§10). |
 | `ref` | A reference to a host document or conversation, e.g. `doc"<id>#<section>"`, rendered as its title. |
@@ -226,15 +226,19 @@ the program's author, and is authorized at the moment it is performed (§10).
 | `request(who, text)`, `start(who, task) : request<'a>` | no | The same two calls, returning a handle instead of waiting. |
 | `wait(x, ~until=?) : outcome<'a>` | yes | Waits for a request, an event or a stream (§6.2). |
 | `cancel(r)`, `handOver(r, who)`, `status(r)` | no | Calls a request off, moves the same request to another participant with a new epoch (§12), or looks at its progress without waiting: `status(r) : option<outcome<'a>>` is `None` while the request is open. |
-| `scope(f)` | — | Runs `f`. Every request started inside it is cancelled when `f` ends, loses an `any`, or passes its deadline (§12). |
 | `say(to, text) : unit` | no | Posts a message to a participant or a `ref`. |
 | `judge(condition, ~about=?) : outcome<bool>` | briefly | The host's judge model decides whether a condition written in natural language holds. |
 | `now() : time` | no | The time the program resumed. It is stable within one step. |
 | `show(x) : string` | no | Renders a value as text for people: a time in ISO 8601, a duration as `1h` or `1d`, a participant as `@alice`, a variant by its name. |
 | `fail(o) : 'b` | no | Ends the program with an outcome other than success (§10). |
 
-Planned next, not in v0: structured child programs (`spawn` and `join`) for
-asking several participants at once.
+Planned next, not in v0:
+
+- structured child programs (`spawn` and `join`) for asking several
+  participants at once;
+- `scope(f)` and request races (`any`). `scope` runs `f`, and every request
+  started inside it is cancelled when `f` ends, loses an `any`, or passes its
+  deadline (§12). They need durable scopes in the runtime first.
 
 ### 6.2 Facts and occurrences
 

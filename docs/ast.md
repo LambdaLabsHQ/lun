@@ -143,8 +143,8 @@ Conventions:
 - **Strings** are decoded: escapes such as `\n` are already processed.
 - **Integers** are canonical decimal strings with arbitrary precision. This
   covers `IntLiteral.value`, `DurationLiteral.amount` and
-  `ParticipantLiteral.instance`. Range checks belong to later phases: §4 says
-  `int` is "as in ReScript", which is 32-bit.
+  `ParticipantLiteral.instance`. Norn's `int` has arbitrary precision too
+  (spec §4), so there is no range to check.
 - **Floats** are JSON numbers, always finite.
 - **Positions** are `{line, column, offset}`:
   - `line` is 1-based.
