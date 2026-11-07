@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { checkSource, type CheckDiagnostic, type SourceCheck } from "../../../src/frontend/check/index.ts";
+import { referenceOptions } from "../../../src/frontend/check/node.ts";
 
 /** Checks a program against the reference host, with the standard library. */
 export function check(source: string): SourceCheck {
-  return checkSource(source);
+  return checkSource(source, referenceOptions());
 }
 
 /** The diagnostics as `code: message @line:column`, for readable failures. */
