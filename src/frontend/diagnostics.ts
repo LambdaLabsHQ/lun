@@ -8,10 +8,12 @@ export function isStackExhausted(error: unknown): boolean {
   return error instanceof RangeError && /call stack/i.test(error.message);
 }
 
-/** A syntax error with the source range it is about. */
+/** A syntax error with the source range it is about. The type checker's diagnostics add a severity, a code and more. */
 export interface Diagnostic {
   message: string;
   span: Span;
+  /** "error" when absent: a syntax error is always one. */
+  severity?: "error" | "warning";
 }
 
 /** `message at file:line:column` */
@@ -21,7 +23,8 @@ export function diagnosticLine(diagnostic: Diagnostic, file: string): string {
 }
 
 /**
- * The one-line form, then the source line with a caret under the range:
+ * The one-line form after its severity, then the source line with a caret
+ * under the range:
  *
  *     error: expected '=>' after pattern, found 'run' at examples/decide.norn:4:13
  *      4 | | Done(Skip) run(@auto, "Record the decision")
@@ -39,7 +42,7 @@ export function formatDiagnostic(diagnostic: Diagnostic, source: string, file: s
   const carets = "^".repeat(Math.max(1, lastColumn - start.column));
   const gutter = " ".repeat(String(start.line).length);
   return [
-    `error: ${diagnosticLine(diagnostic, file)}`,
+    `${diagnostic.severity ?? "error"}: ${diagnosticLine(diagnostic, file)}`,
     ` ${start.line} | ${text}`,
     ` ${gutter} | ${indent}${carets}`,
   ].join("\n");

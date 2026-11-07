@@ -102,24 +102,31 @@ their work together borrows its name.
 ## Documents
 
 - [Language spec (draft v0)](docs/spec.md)
+- [Types and the type checker](docs/types.md)
 - [Syntax tree (AST) and syntax decisions](docs/ast.md)
 - [Durable runtime research](docs/research/runtime.md)
 
 ## Building
 
-The front-end has a lexer, a parser and the syntax tree. It is TypeScript,
-and Node 22.18 or newer runs it as is: there is no build step. CI runs on
-Node 24.
+The front-end has a lexer, a parser, the syntax tree and a type checker. It
+is TypeScript, and Node 22.18 or newer runs it as is: there is no build step.
+CI runs on Node 24.
 
 ```sh
 npm ci              # install the pinned dev dependencies
 npm test            # run the tests
 npm run typecheck   # type-check with tsc
 
-npm run norn -- check examples std                   # report syntax errors
+npm run norn -- check examples std                   # parse and type-check
+npm run norn -- check --json examples/decide.norn    # diagnostics and effects as JSON
 npm run norn -- parse examples/decide.norn           # print the syntax tree
 npm run norn -- parse --json examples/decide.norn    # print it as JSON
 ```
+
+`norn check` checks programs against the host interface in
+[`hosts/reference.norn`](hosts/reference.norn), or the one that `--host <file>`
+names. A program brings in the [standard library](std/std.norn) with
+`open Std`.
 
 `npm link` puts the `norn` command on your PATH.
 

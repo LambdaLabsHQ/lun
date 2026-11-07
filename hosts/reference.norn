@@ -21,8 +21,10 @@ type release = {version: string}
 // What a run reports when it ends. `run` and `start` return one.
 type report = {text: string}
 
-// A message posted in a conversation or a document's discussion.
-type message = {from: participant, text: string}
+// A message posted in a conversation or a document's discussion. Its field
+// names differ from report's: a field read from a value whose type is not
+// known yet comes from the latest declared record type with that field.
+type message = {from: participant, body: string}
 
 // Facts --------------------------------------------------------------------
 
