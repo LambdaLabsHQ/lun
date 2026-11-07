@@ -91,6 +91,24 @@ test("timers and event alternatives survive process restart without polling a pa
   } finally { await store.close(); }
 });
 
+test("a request's deadline survives a disk restart without an active waiter", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "norn-request-by-")), path = join(directory, "runtime.sqlite");
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const clock = new VirtualClock();
+  let store = new SqliteStore(path, clock);
+  await store.create({ executionId: "p", codeId: "c", machineVersion: "m", status: "ready", snapshot: null });
+  const committed = (await store.commit((await store.load("p"))!, {status: "ready", snapshot: null, requests: [{holder: "alice", arguments: "question", by: {after: 100}}]}))!;
+  await store.close(); clock.advanceTo(101); store = new SqliteStore(path, clock);
+  try {
+    assert.equal(await store.claimEffect(committed.effects[0].id, "recovered", 10), null);
+    assert.equal(await store.settleRequest(committed.requests[0].id, 0, "alice", {tag: "Answered", value: "late"}), false);
+    const q = (await store.request(committed.requests[0].id))!;
+    assert.equal(q.by, 100); assert.equal(q.settledAt, 100);
+    assert.deepEqual(q.outcome, {tag: "NoReply"});
+    assert.equal((await store.effects("p")).filter(e => e.operation === "request.closed").length, 1);
+  } finally { await store.close(); }
+});
+
 test("facts can predate subscription; streams cannot replay old or self-caused occurrences", async () => {
   const clock = new VirtualClock(), store = new SqliteStore(":memory:", clock);
   try {

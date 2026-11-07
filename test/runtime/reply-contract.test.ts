@@ -151,6 +151,19 @@ for (const [name, open] of Object.entries(stores)) {
     } finally { await store.close(); }
   });
 
+  test(`${name}: waitUntil preserves a reply-valued event without treating it as a request reply`, async () => {
+    const clock = new VirtualClock(), store = open(clock), host = new SimulatedHost(store, clock);
+    const runtime = new Runtime(source('let observed = runEnded("run")->waitUntil(1h)\n(observed, "continued")'), store, host);
+    try {
+      await runtime.create("p"); await host.pump(runtime);
+      const payload = variant("Refused", text("not a request from this program"));
+      await host.emit("ended", {type: "source", kind: "fact", name: "runEnded", args: [text("run")], labels: {}}, payload);
+      await host.pump(runtime);
+      assert.deepEqual(await control(store), {kind: "done", value: {type: "tuple", values: [variant("Some", payload), text("continued")]}});
+      assert.equal((await store.effects("p")).length, 0);
+    } finally { await store.close(); }
+  });
+
   test(`${name}: an older machine ABI is rejected with both versions and its snapshot unchanged`, async () => {
     const clock = new VirtualClock(), store = open(clock), host = new SimulatedHost(store, clock), code = source('1');
     try {
