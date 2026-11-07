@@ -41,7 +41,7 @@ test("decide.norn waits for Alice until its deadline, then takes the declared de
   const simulation = await start(read("examples/decide.norn"));
   assert.equal(waiting(simulation), "Waiting for @alice’s answer to “Ship the billing probe?” until 2026-11-07 12:00 UTC");
   const [question] = simulation.state.requests;
-  assert.deepEqual([question!.holder, question!.name, question!.awaited, question!.options?.map((o) => (o as { name: string }).name)], ["@alice", "ask", true, ["Ship", "Skip"]]);
+  assert.deepEqual([question!.holder, question!.name, question!.awaited, question!.options?.map((o) => (o as { name: string }).name)], ["@alice", "ask", true, ["Ship", "Drop"]]);
   assert.equal(simulation.state.nextDeadline, Date.parse("2026-11-07T12:00Z"));
 
   // +1 day stops at the deadline on the way, and the program reacts at 12:00.

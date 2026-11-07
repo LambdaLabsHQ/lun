@@ -178,7 +178,7 @@ test("delivery acknowledgement and weeks-later request outcome are independent",
   await store.close();
   const later = open();
   assert.equal(await later.settleRequest(request.id, 0, "alice", { tag: "Done", value: "Ship" }), true);
-  assert.equal(await later.settleRequest(request.id, 0, "alice", { tag: "Done", value: "Skip" }), false);
+  assert.equal(await later.settleRequest(request.id, 0, "alice", { tag: "Done", value: "Drop" }), false);
   assert.equal((await later.scanReady())[0].executionId, initial.executionId);
   assert.equal((await later.load(initial.executionId))!.revision, 1); // Input alone never executes code.
   assert.deepEqual((await later.effects(initial.executionId)).find(e => e.id === offer.id)!.receipt, { accepted: true });

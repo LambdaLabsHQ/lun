@@ -122,7 +122,7 @@ ignore((b, f, g, h, k, m))`), {
 });
 
 test("ask: the call decides its type by ~options, and ask is not a value", () => {
-  assert.equal(typeOf("type probe = Ship | Skip\nlet a = ask(@alice, \"Ship?\", ~options=[Ship, Skip])\nignore(a)", "a"), "outcome<probe>");
+  assert.equal(typeOf("type probe = Ship | Drop\nlet a = ask(@alice, \"Ship?\", ~options=[Ship, Drop])\nignore(a)", "a"), "outcome<probe>");
   assert.equal(typeOf("let a = @alice->ask(\"Free text?\")\nignore(a)", "a"), "outcome<string>");
   assert.equal(typeOf("let ask = (x) => x\nlet a = ask(1)", "a"), "int");
   assert.equal(

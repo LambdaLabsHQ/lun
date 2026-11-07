@@ -79,7 +79,7 @@ test("norn check reports type errors and warnings in the parser's style, and exi
   const directory = mkdtempSync(join(tmpdir(), "norn-cli-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const file = join(directory, "probe.norn");
-  writeFileSync(file, 'type probe = Ship | Skip\nswitch ask(@alice, "Ship?", ~options=[Ship, Skip]) {\n| Done(Ship) => ()\n| Done(_) => ()\n| Done(Skip) => ()\n| TimedOut | Failed(_) => ()\n}\n');
+  writeFileSync(file, 'type probe = Ship | Drop\nswitch ask(@alice, "Ship?", ~options=[Ship, Drop]) {\n| Done(Ship) => ()\n| Done(_) => ()\n| Done(Drop) => ()\n| TimedOut | Failed(_) => ()\n}\n');
   const result = norn(["check", file]);
   assert.equal(result.status, 1);
   assert.equal(result.stdout, "");
@@ -87,11 +87,11 @@ test("norn check reports type errors and warnings in the parser's style, and exi
     result.stderr,
     [
       `error: this switch does not handle Declined(_), Cancelled or Revoked at ${file}:2:1`,
-      ` 2 | switch ask(@alice, "Ship?", ~options=[Ship, Skip]) {`,
+      ` 2 | switch ask(@alice, "Ship?", ~options=[Ship, Drop]) {`,
       `   | ^^^^^^`,
       "",
       `warning: this case can never match: the cases before it cover every value it matches at ${file}:5:3`,
-      ` 5 | | Done(Skip) => ()`,
+      ` 5 | | Done(Drop) => ()`,
       `   |   ^^^^^^^^^^`,
       "",
       "",

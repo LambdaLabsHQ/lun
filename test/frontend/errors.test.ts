@@ -6,7 +6,7 @@ import { parseErrors } from "./helpers.ts";
 /** Source, message, line, column of the first error. */
 const cases: [string, string, number, number][] = [
   // The example from the brief: a case without its arrow.
-  ["switch x {\n| Done(Skip) run(@auto, \"x\")\n}", "expected '=>' after pattern, found 'run'", 2, 14],
+  ["switch x {\n| Done(Drop) run(@auto, \"x\")\n}", "expected '=>' after pattern, found 'run'", 2, 14],
   ["switch x {\n| Done(n) if n > 1 n\n}", "expected '=>' after the guard, found 'n'", 2, 20],
   ['ask(@alice "Ship?")', "expected ',' or ')' after an argument, found a string", 1, 12],
   ["let f = (a, b => a", "expected ')' to close the '(' at 1:9, found end of file", 1, 19],
@@ -87,10 +87,10 @@ test("syntax errors say what was expected, and where", () => {
 
 test("a diagnostic reads as message, file, line and column, then the source line", () => {
   const source = [
-    "type probe = Ship | Skip",
+    "type probe = Ship | Drop",
     "",
-    'switch ask(@alice, "Ship?", ~options=[Ship, Skip]) {',
-    '| Done(Skip) run(@auto, "Record the decision")',
+    'switch ask(@alice, "Ship?", ~options=[Ship, Drop]) {',
+    '| Done(Drop) run(@auto, "Record the decision")',
     "| _ => ()",
     "}",
   ].join("\n");
@@ -100,7 +100,7 @@ test("a diagnostic reads as message, file, line and column, then the source line
     formatDiagnostic(diagnostic!, source, "examples/decide.norn"),
     [
       "error: expected '=>' after pattern, found 'run' at examples/decide.norn:4:14",
-      ` 4 | | Done(Skip) run(@auto, "Record the decision")`,
+      ` 4 | | Done(Drop) run(@auto, "Record the decision")`,
       "   |              ^^^",
     ].join("\n"),
   );

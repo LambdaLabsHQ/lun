@@ -88,10 +88,10 @@ becomes a short program, and the standard library is written in Norn itself.
 ```norn
 // A decision with a declared default. The options are a type, so an answer
 // the host cannot map to an option is never taken as consent.
-type probe = Ship | Skip
+type probe = Ship | Drop
 
-switch ask(@alice, "Ship the billing probe?", ~options=[Ship, Skip], ~until=2026-11-07T12:00Z) {
-| Done(Skip) => run(@auto, "Record the decision: skip the billing probe")
+switch ask(@alice, "Ship the billing probe?", ~options=[Ship, Drop], ~until=2026-11-07T12:00Z) {
+| Done(Drop) => run(@auto, "Record the decision: drop the billing probe")
 | Done(Ship) | TimedOut => run(@auto, "Ship the billing probe as recommended: at most US$0.10")
 | other => fail(other)
 }
@@ -160,7 +160,7 @@ The typing rules, built-in signatures and exhaustiveness checks are in
 | `outcome<'a>` | `Done('a) \| Declined(string) \| Failed(string) \| TimedOut \| Cancelled \| Revoked` |
 | `request<'a>` | A durable handle to a request made of a participant. |
 | `event<'a>`, `stream<'a>` | A fact that may hold, or occurrences that keep happening (§6.2). |
-| User variants | `type choice = Ship \| Skip \| Later(duration)` |
+| User variants | `type choice = Ship \| Drop \| Later(duration)` |
 
 `outcome` is the language's answer to autonomy:
 

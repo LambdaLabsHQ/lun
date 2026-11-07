@@ -3,9 +3,9 @@ import { test } from "node:test";
 import { AST_FORMAT, AST_VERSION, AstJsonError, astFromJson, astToJson, astVersion, type Program, type Span } from "../../src/frontend/index.ts";
 import { parseOk } from "./helpers.ts";
 
-const source = `type probe = Ship | Skip
+const source = `type probe = Ship | Drop
 open Std
-let r = ask(@alice, "Ship?", ~options=[Ship, Skip], ~until=2026-11-07T12:00Z)
+let r = ask(@alice, "Ship?", ~options=[Ship, Drop], ~until=2026-11-07T12:00Z)
 switch r {
 | Done(Ship) | TimedOut => run(@auto, \`ship \${1.5}\`)
 | _ => if true { [x, ...rest] } else { (1, 2h) }
