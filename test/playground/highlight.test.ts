@@ -11,15 +11,15 @@ function styled(source: string): string[] {
 test("Norn's literals, effects and ReScript's tokens each get their style", () => {
   const source = `// a comment
 type probe = Ship | Drop
-let q = request(@codex:2, "Overheating?")
-let r = q->wait(~until=2026-11-07T12:00Z)? /* inline */
+let q = ask(@codex:2, "Overheating?", ~by=2026-11-07T12:00Z)
+let r = q->waitUntil(1h)? /* inline */
 say(doc"ops#machines", \`waited \${30m->show} for \${r}\`)
 let n = fold(1, 2.5, true, 'a)`;
   assert.deepEqual(styled(source), [
     "comment // a comment",
     "keyword type", "type probe", "operator =", "constructor Ship", "operator |", "constructor Drop",
-    "keyword let", "operator =", "effect request", "participant @codex:2", 'string "Overheating?"',
-    "keyword let", "operator =", "operator ->", "effect wait", "label ~until", "operator =", "time 2026-11-07T12:00Z", "operator ?",
+    "keyword let", "operator =", "effect ask", "participant @codex:2", 'string "Overheating?"', "label ~by", "operator =", "time 2026-11-07T12:00Z",
+    "keyword let", "operator =", "operator ->", "effect waitUntil", "time 1h", "operator ?",
     "comment /* inline */",
     "effect say", 'ref doc"ops#machines"', "string `waited ", "interpolation ${", "time 30m", "operator ->", "call show",
     "interpolation }", "string  for ", "interpolation ${", "interpolation }", "string `",

@@ -13,10 +13,10 @@ test("the reference host interface declares the facts and streams of the spec", 
   const externals = [...host.values.values()].filter((value) => value.origin === "host").map((value) => value.name);
   assert.deepEqual(externals, ["merged", "released", "machineUpdated", "replied", "runEnded", "ciFailed", "prActivity", "docChanged", "message"]);
   const result = check(`let a = merged("acme/api#1")
-let b = released(Beta, ~containing=a->wait?)
+let b = released(Beta, ~containing=a->wait)
 let c = machineUpdated(~machine="win-builder", ~atLeast="1.2")
 let d = replied(doc"x#1")
-let e = replied(doc"x#1", ~by=@alice)
+let e = replied(doc"x#1", ~from=@alice)
 let f = runEnded(doc"run#7")
 let g = ciFailed("acme/api")
 let h = prActivity("acme/api#1")
@@ -29,7 +29,7 @@ let j = message(channel"general", ~from=@bob)`);
     c: "event<string>",
     d: "event<message>",
     e: "event<message>",
-    f: "event<outcome<report>>",
+    f: "event<reply<report>>",
     g: "stream<string>",
     h: "stream<string>",
     i: "stream<string>",
@@ -79,34 +79,34 @@ external first: (list<'a>) => option<'a>`, "tickets.norn");
   assert.deepEqual(host.diagnostics, []);
   const std = standardLibrary(host);
   assert.equal(std.ok, true, describe(std.diagnostics));
-  const result = checkSource(`let t = opened("T-1")->wait?
-let u = t->updates->wait?
+  const result = checkSource(`let t = opened("T-1")->wait
+let u = t->updates->wait
 let s = switch u.state {
 | Open => "open"
 | Closed => "closed"
 }
 let f = first([1, 2])
-let r = run(@auto, "x")?
+let r = run(@auto, "x")->wait?
 ignore(f)`, { host, std });
   assert.deepEqual(result.diagnostics, [], describe(result.diagnostics));
   assert.deepEqual(Object.fromEntries(result.bindings.map(({ name, type }) => [name, type])), {
     t: "ticket", u: "update", s: "string", f: "option<int>", r: "report",
   });
   // Without the reference host there is no merged, and report has no fields.
-  const other = checkSource(`ignore(merged("x"))\nlet r = run(@auto, "x")?\nignore(r.text)`, { host, std });
+  const other = checkSource(`ignore(merged("x"))\nlet r = run(@auto, "x")->wait?\nignore(r.text)`, { host, std });
   assert.deepEqual(other.diagnostics.map((d) => d.code), ["unknown-name", "type-mismatch"]);
 });
 
 test("open Std brings the standard library in; without it, its names are unknown", () => {
-  const program = `type choice = Yes | No
+  const program = `type choice = Ship | Drop
 open Std
-let c = decide(@alice, "Ship?", ~options=[Yes, No], ~recommend=Yes, ~until=1d)
+let c = decide(@alice, "Ship?", ~options=[Ship, Drop], ~recommend=Ship, ~by=1d)
 let r = remind(@bob, "Look at #12", ~at=2h)
-let f = followUp(@codex, "Done?", ~until=1h, ~escalateTo=@alice)
+let f = followUp(@codex, "Done?", ~within=1h, ~escalateTo=@alice)
 ignore((r, f))`;
   const result = check(program);
   assert.deepEqual(result.diagnostics, [], describe(result.diagnostics));
-  assert.deepEqual(result.bindings.map(({ name, type }) => `${name}: ${type}`), ["c: choice", "r: outcome<string>", "f: outcome<string>"]);
+  assert.deepEqual(result.bindings.map(({ name, type }) => `${name}: ${type}`), ["c: choice", "r: reply<string>", "f: reply<string>"]);
   const without = check(program.replace("open Std\n", ""));
   assert.deepEqual(without.diagnostics.map((d) => d.code), ["unknown-name", "unknown-name", "unknown-name"]);
   // Without a standard library, open Std is an error.
@@ -122,7 +122,7 @@ test("the reference host file is itself a valid interface, and not a valid progr
 
 test("a host's report takes no type parameters, and an external in a program is one error", () => {
   assert.deepEqual(readInterface("type report<'a> = {text: 'a}", "r.norn").diagnostics.map((d) => d.message), [
-    "expected no type parameters for report, found 1: report is what run and start return, as in outcome<report>",
+    "expected no type parameters for report, found 1: report is what run answers, as in request<report>",
   ]);
   assert.deepEqual(check("external now2: () => time\nlet t = now2()").diagnostics.map((d) => d.code), ["interface-only"]);
 });
@@ -130,8 +130,8 @@ test("a host's report takes no type parameters, and an external in a program is 
 test("field names that differ across the host's records let a helper read a report's text", () => {
   const result = check(`let summary = r => r.text
 let tell = m => say(m.from, m.body)
-switch run(@auto, "x") {
-| Done(r) => say(@bob, summary(r))
+switch run(@auto, "x")->wait {
+| Answered(r) => say(@bob, summary(r))
 | other => fail(other)
 }`);
   assert.deepEqual(result.diagnostics, [], describe(result.diagnostics));

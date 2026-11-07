@@ -8,22 +8,22 @@ function missing(source: string): string[] {
   return diagnostic.missing!;
 }
 
-const handled = (cases: string) => `switch run(@auto, "x") {\n${cases}\n}`;
+const handled = (cases: string) => `switch run(@auto, "x")->wait {\n${cases}\n}`;
 
-test("a switch that misses cases of an outcome names them", () => {
-  const source = handled("| Done(_) => ()\n| Failed(_) => ()\n| TimedOut => ()\n| Cancelled => ()");
+test("a switch that misses cases of a reply names them", () => {
+  const source = handled("| Answered(_) => ()\n| NoReply => ()\n| Broke(_) => ()\n| Cancelled => ()");
   const diagnostic = only(source, "non-exhaustive");
-  assert.equal(diagnostic.message, "this switch does not handle Declined(_) or Revoked");
-  assert.deepEqual(diagnostic.missing, ["Declined(_)", "Revoked"]);
+  assert.equal(diagnostic.message, "this switch does not handle Refused(_) or Revoked");
+  assert.deepEqual(diagnostic.missing, ["Refused(_)", "Revoked"]);
   // It points at the switch keyword.
   assert.equal(under(source, diagnostic), "switch");
-  assert.deepEqual(check(handled("| Done(_) => ()\n| other => fail(other)")).diagnostics, []);
-  assert.deepEqual(check(handled("| Done(_) | Declined(_) | Failed(_) | TimedOut | Cancelled | Revoked => ()")).diagnostics, []);
+  assert.deepEqual(check(handled("| Answered(_) => ()\n| other => fail(other)")).diagnostics, []);
+  assert.deepEqual(check(handled("| Answered(_) | Refused(_) | Broke(_) | NoReply | Cancelled | Revoked => ()")).diagnostics, []);
 });
 
 test("nested patterns: each missing value, all of them, in the order of the constructors", () => {
-  assert.deepEqual(missing(`switch Some(run(@auto, "x")) {\n| Some(Done(_)) => 1\n| None => 2\n}`), [
-    "Some(Declined(_))", "Some(Failed(_))", "Some(TimedOut)", "Some(Cancelled)", "Some(Revoked)",
+  assert.deepEqual(missing(`switch Some(run(@auto, "x")->wait) {\n| Some(Answered(_)) => 1\n| None => 2\n}`), [
+    "Some(Refused(_))", "Some(NoReply)", "Some(Broke(_))", "Some(Cancelled)", "Some(Revoked)",
   ]);
   assert.deepEqual(missing("switch Some(Some(true)) {\n| Some(Some(true)) => 1\n| None => 2\n}"), ["Some(None)", "Some(Some(false))"]);
   assert.deepEqual(missing("type t = A(option<bool>) | B\nswitch B {\n| A(Some(true)) => 1\n| B => 2\n}"), ["A(None)", "A(Some(false))"]);
@@ -31,17 +31,17 @@ test("nested patterns: each missing value, all of them, in the order of the cons
 
 test("or-patterns cover each of their alternatives", () => {
   const source = `type probe = Ship | Drop
-switch ask(@alice, "Ship?", ~options=[Ship, Drop]) {
-| Done(Ship) | TimedOut => 1
-| Done(Drop) => 2
-| Declined(_) | Failed(_) => 3
+switch choose(@alice, "Ship?", [Ship, Drop])->wait {
+| Answered(Ship) | NoReply => 1
+| Answered(Drop) => 2
+| Refused(_) | Broke(_) => 3
 }`;
   assert.deepEqual(missing(source), ["Cancelled", "Revoked"]);
-  assert.deepEqual(check(source.replace("| Declined(_) | Failed(_) => 3", "| Declined(_) | Failed(_) | Cancelled | Revoked => 3")).diagnostics, []);
+  assert.deepEqual(check(source.replace("| Refused(_) | Broke(_) => 3", "| Refused(_) | Broke(_) | Cancelled | Revoked => 3")).diagnostics, []);
 });
 
 test("guarded cases do not count: a guard may be false", () => {
-  assert.deepEqual(missing(handled(`| Done(r) if r.text == "" => ()\n| Declined(_) | Failed(_) | TimedOut | Cancelled | Revoked => ()`)), ["Done(_)"]);
+  assert.deepEqual(missing(handled(`| Answered(r) if r.text == "" => ()\n| Refused(_) | Broke(_) | NoReply | Cancelled | Revoked => ()`)), ["Answered(_)"]);
   const everyGuarded = only("switch Some(1) {\n| x if x == Some(1) => 1\n}", "non-exhaustive");
   assert.equal(everyGuarded.message, "this switch has a guard on every case, and a guard can be false: add a case without one, such as _ => …");
   assert.deepEqual(everyGuarded.missing, ["_"]);
@@ -55,7 +55,7 @@ test("int, float and string literals need a catch-all case", () => {
   assert.deepEqual(missing(`switch "x" {\n| "a" => 1\n}`), ["_"]);
   assert.deepEqual(missing("switch 1.5 {\n| 1.5 => 1\n| -0.0 => 2\n}"), ["_"]);
   // Inside a constructor, _ stands for the other values.
-  assert.deepEqual(missing(`switch ask(@alice, "q") {\n| Done("yes") => 1\n| Done("no") => 2\n| Declined(_) | Failed(_) | TimedOut | Cancelled | Revoked => 3\n}`), ["Done(_)"]);
+  assert.deepEqual(missing(`switch ask(@alice, "q")->wait {\n| Answered("yes") => 1\n| Answered("no") => 2\n| Refused(_) | Broke(_) | NoReply | Cancelled | Revoked => 3\n}`), ["Answered(_)"]);
   assert.deepEqual(check(`switch "x" {\n| "a" => 1\n| _ => 2\n}`).diagnostics, []);
   // bool and () are finite.
   assert.deepEqual(check("switch true {\n| true => 1\n| false => 2\n}").diagnostics, []);
@@ -77,11 +77,11 @@ test("lists, tuples and records", () => {
   assert.deepEqual(check("switch [1] {\n| [] => 0\n| [first, ...rest] => first\n}").diagnostics, []);
   assert.deepEqual(missing("switch (true, false) {\n| (true, true) => 1\n}"), ["(true, false)", "(false, _)"]);
   assert.deepEqual(check("switch (true, Some(1)) {\n| (true, _) => 1\n| (false, Some(_)) => 2\n| (false, None) => 3\n}").diagnostics, []);
-  const record = `type check = {name: string, state: outcome<report>}\nlet c = {name: "ci", state: TimedOut}\n`;
-  assert.deepEqual(missing(`${record}switch c {\n| {state: Done(_)} => 1\n| {state: TimedOut} => 2\n}`), [
-    "{state: Declined(_)}", "{state: Failed(_)}", "{state: Cancelled}", "{state: Revoked}",
+  const record = `type check = {name: string, state: reply<report>}\nlet c = {name: "ci", state: NoReply}\n`;
+  assert.deepEqual(missing(`${record}switch c {\n| {state: Answered(_)} => 1\n| {state: NoReply} => 2\n}`), [
+    "{state: Refused(_)}", "{state: Broke(_)}", "{state: Cancelled}", "{state: Revoked}",
   ]);
-  assert.deepEqual(check(`${record}switch c {\n| {state: Done(_)} => 1\n| {name} => 2\n}`).diagnostics, []);
+  assert.deepEqual(check(`${record}switch c {\n| {state: Answered(_)} => 1\n| {name} => 2\n}`).diagnostics, []);
   assert.deepEqual(missing(`switch {version: "1"} {\n| {version: "1"} => 1\n}`), ["_"]);
 });
 
@@ -91,11 +91,11 @@ test("a case that can never match is a warning, and so is an alternative", () =>
   assert.equal(warning.severity, "warning");
   assert.equal(warning.message, "this case can never match: the cases before it cover every value it matches");
   assert.equal(under(source, warning), `"b"`);
-  assert.deepEqual(all("switch Done(1) {\n| Done(_) => 1\n| Done(1) => 2\n| other => fail(other)\n}"), [
+  assert.deepEqual(all("switch Answered(1) {\n| Answered(_) => 1\n| Answered(1) => 2\n| other => fail(other)\n}"), [
     ["unreachable-case", "this case can never match: the cases before it cover every value it matches", 3, 3],
   ]);
-  assert.deepEqual(all("switch Done(1) {\n| Done(_) | Done(1) => 1\n| other => fail(other)\n}"), [
-    ["unreachable-case", "this alternative can never match: the patterns before it cover every value it matches", 2, 13],
+  assert.deepEqual(all("switch Answered(1) {\n| Answered(_) | Answered(1) => 1\n| other => fail(other)\n}"), [
+    ["unreachable-case", "this alternative can never match: the patterns before it cover every value it matches", 2, 17],
   ]);
   // A guarded case can be unreachable too, and a case after a guarded one is not.
   assert.deepEqual(all("switch Some(1) {\n| _ => 1\n| Some(x) if x > 0 => 2\n}"), [
@@ -110,11 +110,11 @@ test("let patterns and parameters must match every value", () => {
   const refutable = only(source, "refutable-pattern");
   assert.equal(
     refutable.message,
-    "this pattern does not match every value: it misses None; a let takes apart only a value that always matches, such as a tuple or a record; use switch, or ? on an outcome, option or result",
+    "this pattern does not match every value: it misses None; a let takes apart only a value that always matches, such as a tuple or a record; use switch, or ? on a reply, option or result",
   );
   assert.deepEqual(refutable.missing, ["None"]);
   assert.equal(under(source, refutable), "Some(x)");
-  assert.deepEqual(only(`let Done(r) = run(@auto, "x")\nignore(r)`, "refutable-pattern").missing, ["Declined(_)", "Failed(_)", "TimedOut", "Cancelled", "Revoked"]);
+  assert.deepEqual(only(`let Answered(r) = run(@auto, "x")->wait\nignore(r)`, "refutable-pattern").missing, ["Refused(_)", "NoReply", "Broke(_)", "Cancelled", "Revoked"]);
   assert.deepEqual(only("let [x] = [1]\nignore(x)", "refutable-pattern").missing, ["[]", "[_, _, ..._]"]);
   assert.equal(
     only("let f = (Some(x)) => x", "refutable-pattern").message,
@@ -131,7 +131,7 @@ test("patterns: names are bound once, and every alternative binds the same names
     ["type-mismatch", "expected x to have type int, as in the first alternative, found string", 2, 25],
   ]);
   assert.deepEqual(all(`switch 1 {\n| "one" => 1\n| _ => 2\n}`), [["type-mismatch", "expected a pattern of type int, found one of type string", 2, 3]]);
-  assert.deepEqual(all("switch Some(1) {\n| Done(_) => 1\n| _ => 2\n}"), [["type-mismatch", "expected a pattern of type option<int>, found one of type outcome<'a>", 2, 3]]);
+  assert.deepEqual(all("switch Some(1) {\n| Answered(_) => 1\n| _ => 2\n}"), [["type-mismatch", "expected a pattern of type option<int>, found one of type reply<'a>", 2, 3]]);
   // A switch whose patterns are wrong is not also reported as incomplete.
   const result = check("switch Some(1) {\n| Nope => 1\n}");
   assert.deepEqual(result.diagnostics.map((d) => d.code), ["unknown-constructor"], describe(result.diagnostics));

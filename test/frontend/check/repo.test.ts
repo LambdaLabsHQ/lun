@@ -22,10 +22,7 @@ for (const path of [...norn("examples"), "std/std.norn"]) {
   });
 }
 
-// The spec's blocks use the redesigned request and reply model (spec §15), which the checker learns
-// in the front-end change that follows the contract. Until then this test is a todo: it runs and
-// reports, but does not fail CI. That change removes the todo.
-test("every norn block in the spec type-checks", { todo: "the checker learns the request and reply model of spec §15 next" }, () => {
+test("every norn block in the spec type-checks", () => {
   const blocks = codeBlocks(read("docs/spec.md"), "norn");
   assert.equal(blocks.length, 6);
   blocks.forEach((block, index) => {
@@ -65,19 +62,19 @@ test("the reference host is a valid interface file, and the blocks of docs/types
 
 test("the examples' effects, as a reviewer sees them", () => {
   const summary = (path: string) => check(read(path)).effects!.map(({ family, targets }) => [family, ...targets].join(" "));
-  assert.deepEqual(summary("examples/decide.norn"), ["ask @alice", "run @auto"]);
-  assert.deepEqual(summary("examples/follow-up.norn"), ["request @codex", "wait", "handOver @alice", `say doc"ops#machines"`]);
+  assert.deepEqual(summary("examples/decide.norn"), ["confirm @alice", "run @auto", "wait"]);
+  assert.deepEqual(summary("examples/follow-up.norn"), ["ask @codex", "wait", "handOver @alice", `say doc"ops#machines"`]);
   assert.deepEqual(summary("examples/push.norn"), ["run @claude", "wait", "judge"]);
-  assert.deepEqual(summary("examples/release-chain.norn"), ["run @codex", "wait", "say @alice"]);
+  assert.deepEqual(summary("examples/release-chain.norn"), ["run @alice @codex", "wait"]);
   assert.deepEqual(summary("examples/standing-duty.norn"), ["run @auto", "wait"]);
 });
 
 test("the standard library's types", () => {
   const result = check(read("std/std.norn"));
   assert.deepEqual(result.bindings.map(({ name, type }) => `${name}: ${type}`), [
-    "remind: (participant, string, ~at: 'a) => outcome<string> where 'a: deadline",
-    "decide: (participant, string, ~options: list<'a>, ~recommend: 'a, ~until: 'b) => 'a where 'b: deadline",
-    "followUp: (participant, string, ~until: 'a, ~escalateTo: participant) => outcome<string> where 'a: deadline",
+    "remind: (participant, string, ~at: 'a) => reply<string> where 'a: deadline",
+    "decide: (participant, string, ~options: list<'a>, ~recommend: 'a, ~by: 'b) => 'a where 'b: deadline",
+    "followUp: (participant, string, ~within: 'a, ~escalateTo: participant) => reply<string> where 'a: deadline",
     "schedule: (string, ~every: duration, ~on: stream<'a>=?) => 'b",
     "digest: ('a, ~every: duration) => 'b",
   ]);

@@ -1,27 +1,27 @@
 // The standard library, written in Norn and opened with `open Std` (spec §8).
 
 let remind = (who, text, ~at) => {
-  after(at)->wait?
-  ask(who, text)
+  after(at)->wait
+  ask(who, text)->wait
 }
 
-let decide = (who, question, ~options, ~recommend, ~until) =>
-  switch ask(who, `${question}\nRecommended: ${recommend->show}. No answer by ${until->show} means the recommendation.`, ~options, ~until) {
-  | Done(choice) => choice
-  | TimedOut => recommend            // the declared default, and only on timeout
+let decide = (who, question, ~options, ~recommend, ~by) =>
+  switch choose(who, `${question}\nRecommended: ${recommend->show}. No answer by ${by->show} means the recommendation.`, options, ~by)->wait {
+  | Answered(choice) => choice
+  | NoReply => recommend             // the declared default, and only when nobody replied in time
   | other => fail(other)
   }
 
-let followUp = (who, text, ~until, ~escalateTo) => {
-  let q = request(who, text)
-  switch q->wait(~until) {
-  | TimedOut => q->handOver(escalateTo)->wait
-  | answered => answered
+let followUp = (who, text, ~within, ~escalateTo) => {
+  let q = ask(who, text)
+  switch q->waitUntil(within) {
+  | Some(reply) => reply
+  | None => q->handOver(escalateTo)->wait
   }
 }
 
 let schedule = (~every as period, ~on=never(), task) =>
-  every(period)->or(on)->forEach(_ => run(@auto, task))
+  every(period)->or(on)->forEach(_ => run(@auto, task)->wait)
 
 let digest = (who, ~every as period) =>
   schedule(~every=period, `Tell ${who->show} what changed since they last looked; say nothing if nothing changed`)
