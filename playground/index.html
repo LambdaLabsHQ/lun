@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Norn playground</title>
-  <meta name="description" content="Write Norn, the coordination language for teams of people and AI agents, and see its type errors as you type.">
+  <meta name="description" content="Write Norn, the coordination language for teams of people and AI agents: see its type errors as you type, and run it against a simulated team.">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#fafaf8" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#16181b" media="(prefers-color-scheme: dark)">
@@ -55,7 +55,29 @@
       <div id="editor" class="editor"></div>
     </section>
 
-    <aside id="review" class="review" aria-label="Review"></aside>
+    <section class="run" aria-labelledby="run-heading">
+      <header class="run-header">
+        <div class="run-title">
+          <h2 id="run-heading">Run</h2>
+          <p class="run-subtitle">You play the team and the world. Nothing leaves this page.</p>
+          <button id="restart" class="quiet-button" type="button" title="Restart (Ctrl+Enter)">Restart</button>
+        </div>
+        <div class="clock">
+          <p class="clock-reading"><time id="clock-time"></time> <span id="clock-date"></span></p>
+          <div class="clock-controls" role="group" aria-label="Move the clock forward">
+            <button id="advance-hour" class="quiet-button" type="button">+1 hour</button>
+            <button id="advance-day" class="quiet-button" type="button">+1 day</button>
+            <button id="advance-next" class="quiet-button" type="button">To the next deadline</button>
+          </div>
+        </div>
+      </header>
+      <div id="run-body" class="run-body">
+        <div id="review" class="review" aria-label="Review"></div>
+        <div id="stale" class="notice" role="status" hidden></div>
+        <ol id="thread" class="thread" aria-label="What happened"></ol>
+        <div id="now" class="now" aria-live="polite"></div>
+      </div>
+    </section>
   </main>
 </body>
 </html>

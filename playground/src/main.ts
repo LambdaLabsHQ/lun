@@ -1,14 +1,21 @@
 /**
- * The playground page: the editor, the checker in its worker, the review
- * column, the examples menu and the program in the URL fragment.
+ * The playground page: the editor, the checker in its worker, the review,
+ * the run against a simulated team, the examples menu and the program in the
+ * URL fragment.
  */
 import exampleFiles from "norn:examples";
+import hostSource from "../../hosts/reference.norn";
+import stdSource from "../../std/std.norn";
+import { parse } from "../../src/frontend/parser.ts";
 import { problemCount, type CheckReport } from "./check.ts";
 import { createEditor, replaceDoc, reveal, showDiagnostics } from "./editor.ts";
 import { describeExamples, type Example } from "./examples.ts";
+import { readHost, type Host } from "./host.ts";
 import { createPanels, el, icon } from "./panels.ts";
 import type { CheckReply, CheckRequest } from "./protocol.ts";
+import { createRunPanel } from "./run-panel.ts";
 import { fragmentFor, readFragment, type Fragment } from "./share.ts";
+import { Simulation } from "./simulation.ts";
 
 const examples = describeExamples(exampleFiles);
 const fallback = examples.find((example) => example.name === "decide") ?? examples[0]!;
@@ -25,9 +32,8 @@ setUpTheme(byId<HTMLButtonElement>("theme"));
 // The program --------------------------------------------------------------------
 
 const initial = await programFrom(await readFragment(location.hash));
-const view = createEditor({ parent: byId("editor"), doc: initial, onChange: changed });
+const view = createEditor({ parent: byId("editor"), doc: initial, onChange: changed, onRun: restart });
 nameProgram();
-
 
 /** The program a fragment names; an example, and a notice, when it names none that can be read. */
 async function programFrom(fragment: Fragment): Promise<string> {
@@ -69,6 +75,7 @@ let fragmentTimer: ReturnType<typeof setTimeout> | undefined;
 function changed(): void {
   nameProgram();
   say("");
+  showStale();
   clearTimeout(checkTimer);
   checkTimer = setTimeout(requestCheck, 250);
   clearTimeout(fragmentTimer);
@@ -125,6 +132,7 @@ worker.addEventListener("message", (event: MessageEvent<CheckReply>) => {
     return;
   }
   show(reply.report);
+  afterCheck(current, reply.report);
 });
 
 worker.addEventListener("error", (event) => {
@@ -147,6 +155,104 @@ function showStatus(kind: "ok" | "error" | "warning" | "failure", text: string):
 }
 
 requestCheck();
+
+// Running ------------------------------------------------------------------------
+
+const hostTree = parse(hostSource);
+const stdTree = parse(stdSource);
+const host: Host = hostTree.ok ? readHost(hostTree.program, hostSource) : { externals: [], types: new Map() };
+const runPanel = createRunPanel({
+  body: byId("run-body"),
+  clockTime: byId("clock-time"),
+  clockDate: byId("clock-date"),
+  hour: byId("advance-hour"),
+  day: byId("advance-day"),
+  next: byId("advance-next"),
+  thread: byId("thread"),
+  now: byId("now"),
+}, host);
+const stale = byId<HTMLElement>("stale");
+const restartButton = byId<HTMLButtonElement>("restart");
+restartButton.title = `Restart (${/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"}+Enter)`;
+restartButton.addEventListener("click", restart);
+
+/** The run on screen, and the text of the program it runs. */
+let running: { simulation: Simulation; source: string } | null = null;
+/** The latest check, with the text it checked. */
+let checked: { source: string; report: CheckReport } | null = null;
+/** Restart was asked for while the program was being checked. */
+let restartWhenChecked = false;
+let generation = 0;
+
+/** Starts a new run of a program that type-checks, replacing the one on screen. */
+async function run(source: string): Promise<void> {
+  const parsed = parse(source);
+  if (!parsed.ok || !stdTree.ok) return;
+  const mine = ++generation;
+  running?.simulation.dispose();
+  running = null;
+  let simulation: Simulation;
+  try {
+    simulation = await Simulation.start({ program: parsed.program, std: stdTree.program });
+  } catch (error) {
+    if (mine === generation) runPanel.stop(error instanceof Error ? error.message : String(error));
+    return;
+  }
+  if (mine !== generation) {
+    simulation.dispose();
+    return;
+  }
+  running = { simulation, source };
+  runPanel.attach(simulation);
+  showStale();
+}
+
+/**
+ * After each check: a program that type-checks starts at once, unless the
+ * run on screen has had the visitor's moves, which a new run would lose.
+ */
+function afterCheck(source: string, report: CheckReport): void {
+  checked = { source, report };
+  const asked = restartWhenChecked;
+  restartWhenChecked = false;
+  if (report.ok) {
+    if (asked || running === null || (!running.simulation.touched && running.source !== source)) void run(source);
+  } else if (asked) refuse();
+  else if (running === null) runPanel.refuse();
+  showStale();
+}
+
+function restart(): boolean {
+  const current = view.state.doc.toString();
+  if (checked?.source !== current) {
+    restartWhenChecked = true;
+    clearTimeout(checkTimer);
+    requestCheck();
+  } else if (checked.report.ok) void run(current);
+  else refuse();
+  return true;
+}
+
+/** Running is refused while the program does not type-check: the problems say why. */
+function refuse(): void {
+  if (running === null) runPanel.refuse();
+  else showStale("This program does not type-check, so it cannot run. Fix the problems, then restart. The run below is of the last version that did.");
+  panels.revealProblems();
+}
+
+/** Says when the run on screen is of another version of the program than the editor's. */
+function showStale(message?: string): void {
+  const current = view.state.doc.toString();
+  if (message === undefined && (running === null || running.source === current)) {
+    stale.hidden = true;
+    return;
+  }
+  const ok = checked?.source === current && checked.report.ok;
+  const button = el("button", { type: "button", class: "quiet-button" }, "Restart with it");
+  button.addEventListener("click", restart);
+  stale.replaceChildren(message ?? (ok ? "The program has changed since this run started. " : "The program has changed. "), ...(message === undefined && ok ? [button] : []));
+  stale.hidden = false;
+}
 
 // Examples -----------------------------------------------------------------------
 

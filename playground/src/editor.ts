@@ -19,12 +19,14 @@ export interface EditorOptions {
   doc: string;
   /** Called after every change of the text. */
   onChange: (view: EditorView) => void;
+  /** Mod-Enter: run the program. */
+  onRun: () => boolean;
 }
 
-export function createEditor({ parent, doc, onChange }: EditorOptions): EditorView {
+export function createEditor({ parent, doc, onChange, onRun }: EditorOptions): EditorView {
   return new EditorView({
     parent,
-    state: EditorState.create({ doc, extensions: extensions(onChange) }),
+    state: EditorState.create({ doc, extensions: [keymap.of([{ key: "Mod-Enter", run: onRun }]), ...extensions(onChange)] }),
   });
 }
 
